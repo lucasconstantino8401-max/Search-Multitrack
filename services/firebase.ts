@@ -10,13 +10,15 @@ import type { User } from '../types';
 // 4. Substitua os valores abaixo:
 // ------------------------------------------------------------------
 const firebaseConfig = {
-  apiKey: "API_KEY_AQUI", // Ex: AIzaSyD...
-  authDomain: "SEU_PROJETO.firebaseapp.com",
-  projectId: "SEU_PROJETO",
-  storageBucket: "SEU_PROJETO.appspot.com",
-  messagingSenderId: "123456789",
-  appId: "1:123456789:web:abcdef"
+  apiKey: "AIzaSyC3do0sfTr8za_FtJhuvdDRlSElQRQCqbs",
+  authDomain: "search-multitrack.firebaseapp.com",
+  projectId: "search-multitrack",
+  storageBucket: "search-multitrack.firebasestorage.app",
+  messagingSenderId: "972332306776",
+  appId: "1:972332306776:web:40b4017e4f9b66c5aa152d",
+  measurementId: "G-ZEBZSHTPFB"
 };
+
 
 // --- SINGLETONS ---
 let auth: any;
