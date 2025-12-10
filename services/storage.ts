@@ -1,7 +1,5 @@
 import type { Track, User, AppSettings } from '../types';
-import { db } from './firebase';
-import firebase from 'firebase/compat/app';
-import 'firebase/compat/firestore';
+import { db, firebase } from './firebase'; // Use the robustly initialized firebase object
 
 const STORAGE_KEY_SETTINGS = 'search_multitracks_settings';
 const STORAGE_KEY_USER = 'search_multitracks_user';
@@ -60,13 +58,7 @@ export const saveTrackRemote = async (track: Partial<Track>): Promise<void> => {
     createdAt: new Date().toISOString()
   };
 
-  // Merge defaults with provided data
-  // Note: We avoid spreading 'undefined' fields from the partial track object
   const dataToSave: any = { ...defaults };
-  
-  // If it is an update (track has id), we might want to preserve existing fields if we fetched them first, 
-  // but usually in Firestore 'merge: true' handles the "only update fields present in payload" logic.
-  // However, we need to ensure we don't accidentally overwrite fields with undefined from the UI.
   
   Object.keys(track).forEach((key) => {
       const value = (track as any)[key];
@@ -75,7 +67,6 @@ export const saveTrackRemote = async (track: Partial<Track>): Promise<void> => {
       }
   });
   
-  // Ensure ID is set in the document body too
   dataToSave.id = id;
 
   // Compat Syntax: ref.set(data, options)
@@ -87,7 +78,6 @@ export const saveTrackRemote = async (track: Partial<Track>): Promise<void> => {
  */
 export const deleteTrackRemote = async (id: string): Promise<void> => {
   if (!db) throw new Error("Database not initialized");
-  // Compat Syntax: db.collection(...).doc(...).delete()
   await db.collection(TRACKS_COLLECTION).doc(id).delete();
 };
 
@@ -95,9 +85,9 @@ export const deleteTrackRemote = async (id: string): Promise<void> => {
  * Incrementa o contador de busca atomicamente no Firestore.
  */
 export const incrementSearchCountRemote = async (id: string): Promise<void> => {
-  if (!db) return;
+  if (!db || !firebase) return;
   try {
-    // Compat Syntax: FieldValue.increment
+    // Compat Syntax: FieldValue.increment - ensure we use the correct firebase namespace
     await db.collection(TRACKS_COLLECTION).doc(id).update({
       searchCount: firebase.firestore.FieldValue.increment(1)
     });
@@ -122,19 +112,16 @@ export const saveSettings = (settings: AppSettings): void => {
 
 // --- INTEGRATION SERVICE ---
 
-// Helper: Parse CSV Text
 const parseCSV = (csvText: string): any[] => {
   const lines = csvText.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
   
-  // Clean headers
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
   
   const result = [];
   
   for (let i = 1; i < lines.length; i++) {
     const currentLine = lines[i];
-    // Regex complexo para separar CSV respeitando aspas
     const values = currentLine.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
     
     const obj: any = {};
@@ -197,8 +184,6 @@ export const syncFromGoogleSheets = async (url: string): Promise<number> => {
   
   if (!Array.isArray(items)) throw new Error("Formato de dados inválido.");
 
-  // Obter tracks atuais para verificar duplicatas (snapshot único)
-  // Compat Syntax: db.collection().get()
   const snapshot = await db.collection(TRACKS_COLLECTION).get();
   const currentTracks: Track[] = [];
   snapshot.forEach((doc: any) => currentTracks.push(doc.data() as Track));
@@ -206,7 +191,6 @@ export const syncFromGoogleSheets = async (url: string): Promise<number> => {
   let updatedCount = 0;
   const normalize = (str: any) => str ? String(str).trim().toLowerCase() : '';
 
-  // Processar itens
   const promises = items.map(async (item: any) => {
       const title = item.title || item.nome || item.name || item.titulo || item.musica || item['nome da música'] || '';
       const artist = item.artist || item.artista || item.cantor || item.banda || item['nome da banda'] || '';
@@ -217,7 +201,6 @@ export const syncFromGoogleSheets = async (url: string): Promise<number> => {
       const downloadUrl = item.downloadUrl || item.download || item.link || item.url || item.arquivo || item['link de download'] || '';
       const genre = item.genre || item.genero || item.estilo || item.style || item.categoria || 'Worship';
 
-      // Verificar existência
       let existingTrack = currentTracks.find(t => 
           (item.id && t.id === String(item.id)) || 
           (normalize(t.title) === normalize(title) && normalize(t.artist) === normalize(artist))
@@ -232,7 +215,6 @@ export const syncFromGoogleSheets = async (url: string): Promise<number> => {
           imageUrl: imageUrl,
           downloadUrl: downloadUrl,
           genre: genre,
-          // Mantém contagem existente ou inicia com 0
           searchCount: existingTrack ? existingTrack.searchCount : 0,
           createdAt: existingTrack?.createdAt || new Date().toISOString()
       };
@@ -265,11 +247,9 @@ export const logoutUser = (): void => {
   localStorage.removeItem(STORAGE_KEY_USER);
 };
 
-// --- LEGACY EXPORTS (Mantidos para evitar quebras imediatas, mas redirecionados se possível ou retornando vazio) ---
-// Estas funções são síncronas e incompatíveis com Firestore. O UI deve usar listenToTracks.
 export const getTracks = (): Track[] => {
-    return []; // Deprecated: UI should use listenToTracks
+    return []; 
 };
-export const saveTrack = (t: Partial<Track>) => saveTrackRemote(t); // Async wrapper warning
-export const deleteTrack = (id: string) => deleteTrackRemote(id); // Async wrapper warning
+export const saveTrack = (t: Partial<Track>) => saveTrackRemote(t); 
+export const deleteTrack = (id: string) => deleteTrackRemote(id); 
 export const incrementSearchCount = (id: string) => incrementSearchCountRemote(id);

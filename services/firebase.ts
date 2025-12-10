@@ -1,7 +1,10 @@
-import firebase from 'firebase/compat/app';
+import firebaseModule from 'firebase/compat/app';
 import 'firebase/compat/auth';
 import 'firebase/compat/firestore';
 import type { User } from '../types';
+
+// Workaround for some ESM environments where default export is wrapped
+const firebase = (firebaseModule as any).default || firebaseModule;
 
 // ------------------------------------------------------------------
 // CONFIGURAÇÃO DO FIREBASE
@@ -21,34 +24,49 @@ let auth: any = undefined;
 let db: any = undefined;
 let googleProvider: any = undefined;
 let isConfigured = false;
+let app: any = undefined;
 
 // Inicialização
 try {
     // Garante que o app só é inicializado uma vez
     if (!firebase.apps.length) {
-        firebase.initializeApp(firebaseConfig);
+        app = firebase.initializeApp(firebaseConfig);
+    } else {
+        app = firebase.app();
     }
     
-    // Inicializa Auth usando o namespace global compatível
-    // Adiciona verificação para garantir que a importação de efeito colateral funcionou
+    // Inicializa Auth
+    // Em Compat, auth é um método na namespace firebase ou na instância app
     if (typeof firebase.auth === 'function') {
         auth = firebase.auth();
+    } else if (app && typeof app.auth === 'function') {
+        auth = app.auth();
     } else {
         console.error("Firebase Auth module not loaded correctly. 'firebase.auth' is not a function.");
     }
     
-    // Inicializa Firestore (Banco de Dados) usando o namespace global compatível
+    // Inicializa Firestore
     if (typeof firebase.firestore === 'function') {
         db = firebase.firestore();
+    } else if (app && typeof app.firestore === 'function') {
+        db = app.firestore();
     } else {
          console.error("Firebase Firestore module not loaded correctly. 'firebase.firestore' is not a function.");
     }
     
+    // Configura Provider
     if (firebase.auth && typeof firebase.auth.GoogleAuthProvider === 'function') {
         googleProvider = new firebase.auth.GoogleAuthProvider();
         googleProvider.setCustomParameters({
             prompt: 'select_account'
         });
+    } else if (auth) {
+        // Tenta pegar do namespace se disponível
+         const AuthClass = (firebase.auth && firebase.auth.GoogleAuthProvider) || (window as any).firebase?.auth?.GoogleAuthProvider;
+         if (AuthClass) {
+             googleProvider = new AuthClass();
+             googleProvider.setCustomParameters({ prompt: 'select_account' });
+         }
     }
     
     if (auth && db) {
@@ -62,15 +80,15 @@ try {
     isConfigured = false;
 }
 
-export { auth, db };
+export { auth, db, firebase };
 
 /**
  * Realiza o login com Google.
  */
 export const signInWithGoogle = async (): Promise<User> => {
     // MODO DEMONSTRAÇÃO / FALLBACK se a configuração falhar
-    if (!isConfigured || !auth) {
-        console.warn("Firebase failed to initialize. Using Mock Login.");
+    if (!isConfigured || !auth || !googleProvider) {
+        console.warn("Firebase failed to initialize or provider missing. Using Mock Login.");
         return new Promise((resolve) => {
              setTimeout(() => {
                  const mockUser: User = {
@@ -98,8 +116,7 @@ export const signInWithGoogle = async (): Promise<User> => {
     } catch (error: any) {
         console.error("Google Auth Error:", error);
         
-        // CORREÇÃO CRÍTICA: Se o ambiente (ex: preview/iframe) bloquear o popup ou storage,
-        // ativamos o usuário de demonstração para não bloquear o sistema.
+        // Se o ambiente bloquear o popup, ativamos o usuário de demonstração.
         if (error.code === 'auth/operation-not-supported-in-this-environment' || 
             error.code === 'auth/popup-closed-by-user' ||
             error.code === 'auth/unauthorized-domain' ||
