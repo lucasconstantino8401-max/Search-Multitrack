@@ -30,18 +30,33 @@ try {
     }
     
     // Inicializa Auth usando o namespace global compatível
-    auth = firebase.auth();
+    // Adiciona verificação para garantir que a importação de efeito colateral funcionou
+    if (typeof firebase.auth === 'function') {
+        auth = firebase.auth();
+    } else {
+        console.error("Firebase Auth module not loaded correctly. 'firebase.auth' is not a function.");
+    }
     
     // Inicializa Firestore (Banco de Dados) usando o namespace global compatível
-    db = firebase.firestore();
+    if (typeof firebase.firestore === 'function') {
+        db = firebase.firestore();
+    } else {
+         console.error("Firebase Firestore module not loaded correctly. 'firebase.firestore' is not a function.");
+    }
     
-    googleProvider = new firebase.auth.GoogleAuthProvider();
-    googleProvider.setCustomParameters({
-        prompt: 'select_account'
-    });
+    if (firebase.auth && typeof firebase.auth.GoogleAuthProvider === 'function') {
+        googleProvider = new firebase.auth.GoogleAuthProvider();
+        googleProvider.setCustomParameters({
+            prompt: 'select_account'
+        });
+    }
     
-    isConfigured = true;
-    console.log("Firebase initialized successfully.");
+    if (auth && db) {
+        isConfigured = true;
+        console.log("Firebase initialized successfully.");
+    } else {
+        console.error("Firebase initialized but services (auth/db) are missing.");
+    }
 } catch (error) {
     console.error("Firebase Initialization Error:", error);
     isConfigured = false;
