@@ -1,5 +1,6 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut } from 'firebase/auth';
+import firebase from 'firebase/compat/app';
+import 'firebase/compat/auth';
+import 'firebase/compat/firestore';
 import type { User } from '../types';
 
 // ------------------------------------------------------------------
@@ -17,18 +18,25 @@ const firebaseConfig = {
 
 // --- SINGLETONS ---
 let auth: any = undefined;
+let db: any = undefined;
 let googleProvider: any = undefined;
 let isConfigured = false;
 
 // Inicialização
 try {
     // Garante que o app só é inicializado uma vez
-    const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+    if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+    }
+    const app = firebase.app();
     
     // Inicializa Auth
-    auth = getAuth(app);
+    auth = app.auth();
     
-    googleProvider = new GoogleAuthProvider();
+    // Inicializa Firestore (Banco de Dados)
+    db = app.firestore();
+    
+    googleProvider = new firebase.auth.GoogleAuthProvider();
     googleProvider.setCustomParameters({
         prompt: 'select_account'
     });
@@ -39,6 +47,8 @@ try {
     console.error("Firebase Initialization Error:", error);
     isConfigured = false;
 }
+
+export { auth, db };
 
 /**
  * Realiza o login com Google.
@@ -62,7 +72,7 @@ export const signInWithGoogle = async (): Promise<User> => {
 
     // LOGIN REAL COM FIREBASE
     try {
-        const result = await signInWithPopup(auth, googleProvider);
+        const result = await auth.signInWithPopup(googleProvider);
         const fbUser = result.user;
         
         return {
@@ -90,7 +100,7 @@ export const signInWithGoogle = async (): Promise<User> => {
 export const logoutFirebase = async () => {
     if (isConfigured && auth) {
         try {
-            await firebaseSignOut(auth);
+            await auth.signOut();
         } catch (e) {
             console.warn("Logout error:", e);
         }

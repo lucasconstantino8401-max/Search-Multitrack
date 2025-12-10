@@ -16,9 +16,9 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { 
-    getTracks, 
-    saveTrack, 
-    deleteTrack, 
+    listenToTracks,
+    saveTrackRemote,
+    deleteTrackRemote,
     getSettings, 
     saveSettings,
     syncFromGoogleSheets 
@@ -42,28 +42,27 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
   // Form States
   const [formData, setFormData] = useState({ title: '', artist: '', imageUrl: '', downloadUrl: '' });
 
-  const loadData = () => {
-    setTracks(getTracks());
+  useEffect(() => {
+    // Load local settings
     const settings = getSettings();
     setSheetsUrl(settings.googleSheetsApiUrl);
-  };
 
-  useEffect(() => {
-    loadData();
+    // Subscribe to tracks
+    const unsubscribe = listenToTracks(setTracks);
+    return () => unsubscribe();
   }, [user]);
 
   const handleSaveTrack = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (editingTrack) {
-        saveTrack({ ...editingTrack, ...formData });
+        await saveTrackRemote({ ...editingTrack, ...formData });
       } else {
-        saveTrack(formData);
+        await saveTrackRemote(formData);
       }
       setFormData({ title: '', artist: '', imageUrl: '', downloadUrl: '' });
       setEditingTrack(null);
-      loadData(); // Reload UI
-      onUpdate(); // Reload Main App
+      // No need to loadData, listener updates UI
     } catch (err) {
       console.error("Erro ao salvar:", err);
     }
@@ -73,7 +72,6 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
     e.preventDefault();
     saveSettings({ googleSheetsApiUrl: sheetsUrl });
     setSyncMsg({ type: 'success', text: 'Configurações salvas localmente.' });
-    onUpdate();
   };
 
   const handleSync = async () => {
@@ -86,23 +84,19 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
     setSyncMsg(null);
 
     try {
-      // Salva antes de sincronizar
       saveSettings({ googleSheetsApiUrl: sheetsUrl });
       
       const count = await syncFromGoogleSheets(sheetsUrl);
       
       setSyncMsg({ 
         type: 'success', 
-        text: `Sincronização concluída! ${count} músicas atualizadas/adicionadas.` 
+        text: `Sincronização concluída! ${count} músicas atualizadas/adicionadas no banco de dados.` 
       });
-      
-      loadData(); // Atualiza lista
-      onUpdate(); // Atualiza app principal
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setSyncMsg({ 
         type: 'error', 
-        text: 'Erro ao conectar. Verifique se o link está público ou se é um arquivo válido.' 
+        text: error.message || 'Erro ao conectar.' 
       });
     } finally {
       setIsSyncing(false);
@@ -118,9 +112,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
     if (!trackToDelete) return;
     
     try {
-        deleteTrack(trackToDelete.id);
-        loadData();
-        onUpdate();
+        await deleteTrackRemote(trackToDelete.id);
     } catch (err) {
         console.error("Erro ao deletar track:", err);
     } finally {
@@ -223,8 +215,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
             {/* List */}
             <div className="lg:col-span-2 space-y-4">
               <div className="flex justify-between items-center mb-2">
-                 <h3 className="text-lg font-bold text-white">Biblioteca ({tracks.length})</h3>
-                 <span className="text-xs text-zinc-500 uppercase tracking-wider">Gerenciamento Local</span>
+                 <h3 className="text-lg font-bold text-white">Biblioteca Cloud ({tracks.length})</h3>
+                 <span className="text-xs text-green-500 uppercase tracking-wider flex items-center gap-1">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Live
+                 </span>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -274,7 +268,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                  </div>
                  <div>
                    <h3 className="text-xl font-bold text-white">Conexão de Dados</h3>
-                   <p className="text-zinc-500 text-sm">Sincronização via Google Sheets ou API JSON.</p>
+                   <p className="text-zinc-500 text-sm">Sincronização via Google Sheets ou API JSON para o Banco de Dados.</p>
                  </div>
                </div>
                
@@ -327,7 +321,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                         ) : (
                             <DownloadCloud size={18} />
                         )}
-                        {isSyncing ? 'Processando...' : 'Sincronizar Base de Dados'}
+                        {isSyncing ? 'Enviando para Nuvem...' : 'Sincronizar Base de Dados'}
                     </button>
                     
                     <button 
@@ -350,7 +344,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
               <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 w-full max-w-sm shadow-2xl animate-fade-in-up">
                   <h3 className="text-lg font-bold text-white mb-2">Excluir Item?</h3>
                   <p className="text-zinc-400 text-sm mb-6">
-                      A track <span className="text-white font-medium">"{trackToDelete.title}"</span> será removida localmente.
+                      A track <span className="text-white font-medium">"{trackToDelete.title}"</span> será removida permanentemente do banco de dados.
                   </p>
                   <div className="flex justify-end gap-3">
                       <button 

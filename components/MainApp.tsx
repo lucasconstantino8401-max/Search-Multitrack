@@ -15,7 +15,7 @@ import {
   Music,
   Share2
 } from 'lucide-react';
-import { getTracks, incrementSearchCount } from '../services/storage';
+import { listenToTracks, incrementSearchCountRemote } from '../services/storage';
 import type { MainAppProps, Track } from '../types';
 import AdminPanel from './AdminPanel';
 import InteractiveBackground from './InteractiveBackground';
@@ -26,7 +26,6 @@ const ADMIN_EMAILS = [
 ];
 
 // Função auxiliar para normalizar texto (remove acentos e deixa minúsculo)
-// Ex: "Éden" -> "eden", "Árvore" -> "arvore"
 const normalizeText = (text: string) => {
   return text
     .toLowerCase()
@@ -239,45 +238,55 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   const [searched, setSearched] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [activeCategory, setActiveCategory] = useState("Todos");
-  
-  // State for selected track (Detail View)
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
+  const [loadingData, setLoadingData] = useState(true);
 
   // Check Permissions
   const isAdmin = ADMIN_EMAILS.includes(user.email);
 
-  const loadData = () => {
-    const allTracks = getTracks();
-    setTracks(allTracks);
-    
-    // 1. Calcula Trending
-    const sortedByPopularity = [...allTracks]
-        .filter(t => t.searchCount > 0)
-        .sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0))
-        .slice(0, 4);
-    setTrendingTracks(sortedByPopularity);
-
-    // 2. Calcula Recentes
-    const sortedByDate = [...allTracks]
-        .sort((a, b) => {
-            const dateA = new Date(a.createdAt || 0).getTime();
-            const dateB = new Date(b.createdAt || 0).getTime();
-            return dateB - dateA; 
-        })
-        .slice(0, 32); 
-    setRecentTracks(sortedByDate);
-  };
-
   useEffect(() => {
-    loadData();
-  }, []);
+    // Inscreve-se no Firestore para receber atualizações em tempo real
+    setLoadingData(true);
+    const unsubscribe = listenToTracks((allTracks) => {
+        setTracks(allTracks);
+        
+        // 1. Calcula Trending
+        const sortedByPopularity = [...allTracks]
+            .filter(t => t.searchCount > 0)
+            .sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0))
+            .slice(0, 4);
+        setTrendingTracks(sortedByPopularity);
+
+        // 2. Calcula Recentes
+        const sortedByDate = [...allTracks]
+            .sort((a, b) => {
+                const dateA = new Date(a.createdAt || 0).getTime();
+                const dateB = new Date(b.createdAt || 0).getTime();
+                return dateB - dateA; 
+            })
+            .slice(0, 32); 
+        setRecentTracks(sortedByDate);
+        setLoadingData(false);
+
+        // Se estiver pesquisando, re-filtrar
+        if (searchTerm) {
+            const term = normalizeText(searchTerm);
+            const results = allTracks.filter(t => {
+                const title = normalizeText(t.title || '');
+                const artist = normalizeText(t.artist || '');
+                return title.includes(term) || artist.includes(term);
+            });
+            setFilteredTracks(results);
+        }
+    });
+
+    return () => unsubscribe();
+  }, [searchTerm]); // Re-run filter if search term changes (handled inside subscription for simplicity if data updates)
 
   const handleSearch = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     
     const cleanSearchTerm = searchTerm.trim();
-    
-    // Se a busca estiver vazia, restaura o estado inicial
     if (!cleanSearchTerm) {
         setSearched(false);
         setFilteredTracks([]);
@@ -285,12 +294,9 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
     }
 
     const term = normalizeText(cleanSearchTerm);
-    
-    // Filtra comparando título e artista (normalizados)
     const results = tracks.filter(t => {
         const title = normalizeText(t.title || '');
         const artist = normalizeText(t.artist || '');
-        
         return title.includes(term) || artist.includes(term);
     });
 
@@ -298,7 +304,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
     setSearched(true);
   };
   
-  // Atualiza busca ao limpar input manualmente
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
       const value = e.target.value;
       setSearchTerm(value);
@@ -316,18 +321,14 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
       setSelectedTrack(track);
   };
 
-  const handleDownloadTrack = () => {
+  const handleDownloadTrack = async () => {
     if (!selectedTrack) return;
     
     if (selectedTrack.downloadUrl && selectedTrack.downloadUrl !== '#') {
        window.open(selectedTrack.downloadUrl, '_blank');
     }
-    incrementSearchCount(selectedTrack.id);
-    
-    // Update data locally to reflect new count
-    setTimeout(() => {
-        loadData();
-    }, 500);
+    // Incrementa contagem no Firestore
+    await incrementSearchCountRemote(selectedTrack.id);
   };
 
   const clearSearch = () => {
@@ -338,10 +339,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   };
 
   const handleAdminUpdate = () => {
-    loadData();
-    if (searched && searchTerm) {
-        handleSearch();
-    }
+    // Não é necessário recarregar manualmente pois o ouvinte (listenToTracks) cuida disso
+    console.log("Admin update triggered - waiting for realtime sync");
   };
 
   return (
@@ -371,9 +370,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
 
       <main className="pb-24 relative z-10">
         
-        {/* HERO SECTION with Search */}
+        {/* HERO SECTION */}
         <div className="relative pt-16 pb-20 px-6 overflow-hidden">
-            {/* Background Gradients - Monochrome */}
             <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-zinc-900/20 via-black to-black z-0"></div>
             
             <div className="relative z-10 max-w-3xl mx-auto text-center">
@@ -406,14 +404,14 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                             onChange={handleInputChange}
                             placeholder="Buscar música, artista ou álbum..." 
                             className="w-full bg-transparent border-none text-white px-4 py-3 focus:outline-none text-lg placeholder-zinc-600"
-                            disabled={tracks.length === 0}
+                            disabled={loadingData}
                         />
                         {searchTerm && (
                             <button type="button" onClick={clearSearch} className="p-2 text-zinc-500 hover:text-white transition">
                                 <X size={20} />
                             </button>
                         )}
-                        <button type="submit" disabled={tracks.length === 0} className="bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black rounded-full px-8 py-3 font-bold transition-all text-sm uppercase tracking-wide shadow-lg shadow-white/5">
+                        <button type="submit" disabled={loadingData || tracks.length === 0} className="bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 text-black rounded-full px-8 py-3 font-bold transition-all text-sm uppercase tracking-wide shadow-lg shadow-white/5">
                             Buscar
                         </button>
                     </div>
@@ -440,7 +438,11 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
 
         {/* Content Area */}
         <div className="max-w-7xl mx-auto px-6">
-        {tracks.length === 0 ? (
+        {loadingData ? (
+             <div className="flex justify-center py-20">
+                 <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white"></div>
+             </div>
+        ) : tracks.length === 0 ? (
             /* EMPTY STATE */
             <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-zinc-800 rounded-3xl bg-zinc-900/20 max-w-2xl mx-auto backdrop-blur-sm">
                 <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mb-6 ring-1 ring-zinc-800 shadow-xl">
@@ -450,7 +452,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                 <p className="text-zinc-500 max-w-md mb-8 text-sm">
                   {isAdmin 
                     ? "Conecte sua base de dados no painel administrativo para iniciar." 
-                    : "O sistema está sendo atualizado. Volte em breve."}
+                    : "A biblioteca está sendo atualizada."}
                 </p>
                 {isAdmin && (
                     <button 
@@ -467,8 +469,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                 {!searched ? (
                     /* Home View */
                     <div className="animate-fade-in space-y-16">
-                        
-                        {/* Trending Section */}
                         {trendingTracks.length > 0 && (
                             <section>
                                 <div className="flex items-center justify-between mb-6">
@@ -484,8 +484,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                                 </div>
                             </section>
                         )}
-
-                        {/* Recent / Full Library */}
                         {recentTracks.length > 0 && (
                             <section>
                                 <div className="flex items-center justify-between mb-6 border-b border-white/5 pb-4">
@@ -495,7 +493,6 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                                             {trendingTracks.length === 0 ? 'Biblioteca Completa' : 'Novidades'}
                                         </h2>
                                     </div>
-                                    <button onClick={() => {}} className="text-xs text-white font-bold hover:text-zinc-300 uppercase tracking-wider">Ver tudo</button>
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
                                     {recentTracks.map((track, index) => (
