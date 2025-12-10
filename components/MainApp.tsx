@@ -22,6 +22,15 @@ const ADMIN_EMAILS = [
     'admin@searchmultitracks.com', 
 ];
 
+// Função auxiliar para normalizar texto (remove acentos e deixa minúsculo)
+// Ex: "Éden" -> "eden", "Árvore" -> "arvore"
+const normalizeText = (text: string) => {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+};
+
 // Componente de Logo SVG Reutilizável (Monocromático)
 const AppLogoSVG = ({ className = "w-full h-full" }: { className?: string }) => (
     <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
@@ -51,9 +60,10 @@ interface TrackCardProps {
   track: Track;
   featured?: boolean;
   onClick: (track: Track) => void;
+  index?: number;
 }
 
-const TrackCard: React.FC<TrackCardProps> = ({ track, featured = false, onClick }) => (
+const TrackCard: React.FC<TrackCardProps> = ({ track, featured = false, onClick, index = 0 }) => (
   <div 
       className={`
         relative group overflow-hidden rounded-2xl flex flex-col
@@ -62,7 +72,12 @@ const TrackCard: React.FC<TrackCardProps> = ({ track, featured = false, onClick 
         hover:-translate-y-1.5 hover:border-white/30 hover:bg-zinc-900/60
         hover:shadow-[0_15px_40px_-10px_rgba(255,255,255,0.05)]
         ${featured ? 'h-full' : ''}
+        animate-fade-in-up
       `}
+      style={{ 
+        animationDelay: `${index * 0.05}s`,
+        animationFillMode: 'both' 
+      }}
   >
       {/* Subtle white glow overlay on hover */}
       <div className="absolute inset-0 bg-gradient-to-b from-transparent via-white/0 to-white/0 opacity-0 group-hover:opacity-100 group-hover:to-white/5 transition-opacity duration-500 pointer-events-none"></div>
@@ -166,30 +181,37 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   const handleSearch = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     
-    // If empty search and Category is All, reset
-    if (!searchTerm.trim() && activeCategory === "Todos") {
+    const cleanSearchTerm = searchTerm.trim();
+    
+    // Se a busca estiver vazia, restaura o estado inicial
+    if (!cleanSearchTerm) {
         setSearched(false);
+        setFilteredTracks([]);
         return;
     }
 
-    const term = searchTerm.toLowerCase();
+    const term = normalizeText(cleanSearchTerm);
     
-    let results = tracks;
-
-    // Filter by Search Term
-    if (term) {
-        results = results.filter(t => 
-            t.title.toLowerCase().includes(term) || 
-            t.artist.toLowerCase().includes(term)
-        );
-    }
-
-    if (activeCategory !== "Todos") {
-        // Mock filtering logic for demo
-    }
+    // Filtra comparando título e artista (normalizados)
+    const results = tracks.filter(t => {
+        const title = normalizeText(t.title || '');
+        const artist = normalizeText(t.artist || '');
+        
+        return title.includes(term) || artist.includes(term);
+    });
 
     setFilteredTracks(results);
     setSearched(true);
+  };
+  
+  // Atualiza busca ao limpar input manualmente
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setSearchTerm(value);
+      if (value === '') {
+          setSearched(false);
+          setFilteredTracks([]);
+      }
   };
 
   const handleCategoryClick = (cat: string) => {
@@ -279,13 +301,13 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                         <input 
                             type="text" 
                             value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
+                            onChange={handleInputChange}
                             placeholder="Buscar música, artista ou álbum..." 
                             className="w-full bg-transparent border-none text-white px-4 py-3 focus:outline-none text-lg placeholder-zinc-600"
                             disabled={tracks.length === 0}
                         />
                         {searchTerm && (
-                            <button type="button" onClick={() => setSearchTerm('')} className="p-2 text-zinc-500 hover:text-white transition">
+                            <button type="button" onClick={clearSearch} className="p-2 text-zinc-500 hover:text-white transition">
                                 <X size={20} />
                             </button>
                         )}
@@ -354,8 +376,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                                     </div>
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                                    {trendingTracks.map(track => (
-                                        <TrackCard key={track.id} track={track} featured={true} onClick={handleTrackClick} />
+                                    {trendingTracks.map((track, index) => (
+                                        <TrackCard key={track.id} track={track} featured={true} onClick={handleTrackClick} index={index} />
                                     ))}
                                 </div>
                             </section>
@@ -374,8 +396,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                                     <button onClick={() => {}} className="text-xs text-white font-bold hover:text-zinc-300 uppercase tracking-wider">Ver tudo</button>
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                                    {recentTracks.map(track => (
-                                        <TrackCard key={`recent-${track.id}`} track={track} onClick={handleTrackClick} />
+                                    {recentTracks.map((track, index) => (
+                                        <TrackCard key={`recent-${track.id}`} track={track} onClick={handleTrackClick} index={index} />
                                     ))}
                                 </div>
                             </section>
@@ -396,8 +418,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
                                     </button>
                                 </div>
                                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-6">
-                                    {filteredTracks.map(track => (
-                                        <TrackCard key={`search-${track.id}`} track={track} onClick={handleTrackClick} />
+                                    {filteredTracks.map((track, index) => (
+                                        <TrackCard key={`search-${track.id}`} track={track} onClick={handleTrackClick} index={index} />
                                     ))}
                                 </div>
                             </>
