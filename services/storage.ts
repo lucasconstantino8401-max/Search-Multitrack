@@ -1,11 +1,59 @@
 import type { Track, User, AppSettings } from '../types';
-import { db as initialDb, firebase } from './firebase'; 
+import { db, firebase } from './firebase'; 
 
 const STORAGE_KEY_SETTINGS = 'search_multitracks_settings';
 const STORAGE_KEY_USER = 'search_multitracks_user';
+const FIRESTORE_CONFIG_COLLECTION = 'app_config';
+const FIRESTORE_CONFIG_DOC = 'main';
 
-// --- SETTINGS SERVICE (LOCAL STORAGE) ---
+// --- SETTINGS SERVICE (HYBRID: FIRESTORE + LOCAL) ---
 
+// Salva as configurações na Nuvem (Firestore) para que todos vejam
+export const saveSettingsRemote = async (settings: AppSettings): Promise<void> => {
+    if (!db) {
+        // Fallback local se Firebase não estiver ativo
+        localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+        return;
+    }
+
+    try {
+        await db.collection(FIRESTORE_CONFIG_COLLECTION).doc(FIRESTORE_CONFIG_DOC).set(settings, { merge: true });
+    } catch (error) {
+        console.error("Erro ao salvar configurações no Firestore:", error);
+        throw new Error("Não foi possível salvar na nuvem. Verifique sua conexão ou permissões.");
+    }
+};
+
+// Escuta as configurações da Nuvem em Tempo Real
+export const listenToGlobalSettings = (callback: (settings: AppSettings) => void) => {
+    if (!db) {
+        // Fallback: retorna o local storage imediatamente
+        const local = localStorage.getItem(STORAGE_KEY_SETTINGS);
+        if (local) callback(JSON.parse(local));
+        return () => {};
+    }
+
+    // Escuta mudanças no documento 'app_config/main'
+    const unsubscribe = db.collection(FIRESTORE_CONFIG_COLLECTION).doc(FIRESTORE_CONFIG_DOC)
+        .onSnapshot((doc: any) => {
+            if (doc.exists) {
+                const data = doc.data() as AppSettings;
+                // Atualiza também o local para cache rápido na próxima vez
+                localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(data));
+                callback(data);
+            } else {
+                // Se não existe documento, tenta usar o local
+                const local = localStorage.getItem(STORAGE_KEY_SETTINGS);
+                if (local) callback(JSON.parse(local));
+            }
+        }, (error: any) => {
+            console.error("Erro ao ouvir configurações:", error);
+        });
+
+    return unsubscribe;
+};
+
+// Mantemos o getSettings síncrono apenas para estados iniciais de UI, se necessário
 export const getSettings = (): AppSettings => {
   const stored = localStorage.getItem(STORAGE_KEY_SETTINGS);
   if (!stored) {
@@ -15,7 +63,8 @@ export const getSettings = (): AppSettings => {
 };
 
 export const saveSettings = (settings: AppSettings): void => {
-  localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+    // Wrapper legado para manter compatibilidade, mas preferimos saveSettingsRemote
+    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
 };
 
 // --- DATA PARSERS ---
@@ -202,33 +251,40 @@ const fetchData = async (url: string): Promise<Track[]> => {
     }
 };
 
-// --- CORE SERVICE ---
+// --- CORE SERVICE (LISTENER PRINCIPAL) ---
 
 export const listenToTracks = (callback: (tracks: Track[]) => void) => {
-  const settings = getSettings();
-  
-  if (!settings.googleSheetsApiUrl) {
-      console.warn("URL da API não configurada.");
-      callback([]);
-      return () => {};
-  }
-
+  let activeUrl = '';
+  let intervalId: any = null;
   let isActive = true;
 
   const loadData = async () => {
-      if (!isActive) return;
-      const tracks = await fetchData(settings.googleSheetsApiUrl);
+      if (!isActive || !activeUrl) return;
+      const tracks = await fetchData(activeUrl);
       if (isActive) callback(tracks);
   };
 
-  loadData();
-  
-  // Atualiza a cada 60s
-  const intervalId = setInterval(loadData, 60000);
+  // 1. Primeiro, ouvimos a configuração GLOBAL do Firestore
+  const unsubscribeSettings = listenToGlobalSettings((settings) => {
+      if (settings.googleSheetsApiUrl && settings.googleSheetsApiUrl !== activeUrl) {
+          activeUrl = settings.googleSheetsApiUrl;
+          console.log("Nova URL de dados recebida:", activeUrl);
+          
+          // Carrega imediatamente ao receber nova URL
+          loadData();
+
+          // Reinicia intervalo de polling (60s)
+          if (intervalId) clearInterval(intervalId);
+          intervalId = setInterval(loadData, 60000);
+      } else if (!settings.googleSheetsApiUrl) {
+          callback([]); // Limpa se não tiver URL
+      }
+  });
 
   return () => {
       isActive = false;
-      clearInterval(intervalId);
+      unsubscribeSettings(); // Para de ouvir o Firestore
+      if (intervalId) clearInterval(intervalId); // Para o polling
   };
 };
 
@@ -264,6 +320,17 @@ export const deleteTrackRemote = async (id: string): Promise<void> => {
 
 export const incrementSearchCountRemote = async (id: string): Promise<void> => {
    // Analytics stub
+   if (db && id) {
+       try {
+           const ref = db.collection('analytics').doc(id);
+           await ref.set({ 
+               searchCount: firebase.firestore.FieldValue.increment(1),
+               lastAccessed: new Date().toISOString()
+           }, { merge: true });
+       } catch (e) {
+           console.warn("Analytics error", e);
+       }
+   }
 };
 
 export const syncFromGoogleSheets = async (url: string): Promise<number> => {

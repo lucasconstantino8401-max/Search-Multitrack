@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import { 
     listenToTracks,
-    getSettings, 
-    saveSettings,
+    saveSettingsRemote,
+    listenToGlobalSettings,
     syncFromGoogleSheets 
 } from '../services/storage';
 import type { AdminPanelProps, Track } from '../types';
@@ -32,15 +32,22 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
   const [statusMsg, setStatusMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
   useEffect(() => {
-    // Carregar configurações locais
-    const settings = getSettings();
-    setApiUrl(settings.googleSheetsApiUrl);
+    // Carregar configurações globais (Firestore)
+    const unsubscribeSettings = listenToGlobalSettings((settings) => {
+        if (settings.googleSheetsApiUrl) {
+            setApiUrl(settings.googleSheetsApiUrl);
+        }
+    });
 
-    // Carregar dados (apenas leitura)
-    const unsubscribe = listenToTracks((data) => {
+    // Carregar dados (apenas leitura para preview)
+    const unsubscribeTracks = listenToTracks((data) => {
         setTracks(data);
     });
-    return () => unsubscribe();
+    
+    return () => {
+        unsubscribeSettings();
+        unsubscribeTracks();
+    };
   }, [user]);
 
   const handleSaveAndTest = async () => {
@@ -53,23 +60,33 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
     setStatusMsg(null);
 
     try {
-      // Salva URL
-      saveSettings({ googleSheetsApiUrl: apiUrl });
-      
-      // Testa conexão lendo os dados agora (Reusing sync function which now handles generic API)
+      // 1. Testa a conexão primeiro
       const count = await syncFromGoogleSheets(apiUrl);
       
       if (count === 0) {
           setStatusMsg({ type: 'error', text: 'Conectado, mas nenhum dado compatível foi encontrado. Verifique os nomes das colunas.' });
-      } else {
-          setStatusMsg({ type: 'success', text: `Sucesso! ${count} multitracks carregadas.` });
-          onUpdate(); 
-      }
+          setIsTesting(false);
+          return;
+      } 
+
+      // 2. Se deu certo, salva na Nuvem (Firestore)
+      await saveSettingsRemote({ googleSheetsApiUrl: apiUrl });
+      
+      setStatusMsg({ type: 'success', text: `Sucesso! Configuração salva na nuvem. ${count} tracks carregadas.` });
+      onUpdate(); 
+      
     } catch (error: any) {
       console.error(error);
+      let errorText = 'Erro de conexão.';
+      if (error.message && error.message.includes('permissões')) {
+          errorText = 'Erro de permissão no Banco de Dados.';
+      } else {
+          errorText = 'Erro ao acessar a planilha. Verifique se ela está pública na Web.';
+      }
+      
       setStatusMsg({ 
         type: 'error', 
-        text: 'Erro de conexão. Verifique se a Planilha está pública (Arquivo > Compartilhar > Publicar na Web).' 
+        text: errorText
       });
     } finally {
       setIsTesting(false);
@@ -129,8 +146,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                    <Globe size={32} />
                  </div>
                  <div>
-                   <h3 className="text-xl font-bold text-white">Google Sheets / API</h3>
-                   <p className="text-zinc-400 text-sm">Cole o link da sua planilha ou endpoint JSON abaixo.</p>
+                   <h3 className="text-xl font-bold text-white">Google Sheets / API (Global)</h3>
+                   <p className="text-zinc-400 text-sm">A URL salva aqui será atualizada automaticamente para todos os usuários do App.</p>
                  </div>
                </div>
                
@@ -155,7 +172,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                         className="bg-white hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 text-black font-bold px-6 py-3 rounded-lg flex items-center gap-2 transition whitespace-nowrap"
                      >
                         {isTesting ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
-                        Conectar
+                        Salvar Globalmente
                      </button>
                  </div>
 
