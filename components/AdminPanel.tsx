@@ -4,488 +4,297 @@ import {
   X, 
   Music, 
   Users, 
-  Edit2, 
-  Plus, 
-  Save, 
-  Trash2,
   Settings,
   Link as LinkIcon,
   RefreshCw,
-  DownloadCloud,
   CheckCircle2,
   AlertCircle,
-  Database
+  Globe,
+  ExternalLink,
+  Code2,
+  HelpCircle
 } from 'lucide-react';
 import { 
     listenToTracks,
-    saveTrackRemote,
-    deleteTrackRemote,
     getSettings, 
     saveSettings,
     syncFromGoogleSheets 
 } from '../services/storage';
-import { db } from '../services/firebase';
 import type { AdminPanelProps, Track } from '../types';
 
 const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
-  const [activeTab, setActiveTab] = useState<'tracks' | 'users' | 'settings'>('tracks');
+  const [activeTab, setActiveTab] = useState<'settings' | 'tracks' | 'users'>('settings');
   const [tracks, setTracks] = useState<Track[]>([]);
-  const [editingTrack, setEditingTrack] = useState<Track | null>(null);
   
-  // Database Status
-  const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'error'>('checking');
-  
-  // States para o modal de exclusão
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [trackToDelete, setTrackToDelete] = useState<Track | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
-
   // Settings State
-  const [sheetsUrl, setSheetsUrl] = useState('');
-  const [isSyncing, setIsSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
-
-  // Form States
-  const [formData, setFormData] = useState({ 
-      title: '', 
-      artist: '', 
-      imageUrl: '', 
-      downloadUrl: '', 
-      genre: 'Worship' 
-  });
-  const [isSaving, setIsSaving] = useState(false);
+  const [apiUrl, setApiUrl] = useState('');
+  const [isTesting, setIsTesting] = useState(false);
+  const [statusMsg, setStatusMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
 
   useEffect(() => {
-    // Check DB Connection
-    if (db) {
-        setDbStatus('connected');
-    } else {
-        // Fallback check via window if lazy loaded
-        const checkInterval = setInterval(() => {
-            if ((window as any).firebase?.firestore) {
-                setDbStatus('connected');
-                clearInterval(checkInterval);
-            } else {
-                setDbStatus('error');
-            }
-        }, 1000);
-        setTimeout(() => clearInterval(checkInterval), 5000);
-    }
-
-    // Load local settings
+    // Carregar configurações locais
     const settings = getSettings();
-    setSheetsUrl(settings.googleSheetsApiUrl);
+    setApiUrl(settings.googleSheetsApiUrl);
 
-    // Subscribe to tracks
+    // Carregar dados (apenas leitura)
     const unsubscribe = listenToTracks((data) => {
         setTracks(data);
-        if (data.length > 0) setDbStatus('connected');
     });
     return () => unsubscribe();
   }, [user]);
 
-  const handleSaveTrack = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSaving(true);
-    
-    try {
-      if (editingTrack) {
-        // Edit Mode
-        await saveTrackRemote({ 
-            ...editingTrack, 
-            ...formData 
-        });
-      } else {
-        // Create Mode
-        await saveTrackRemote(formData);
-      }
-      
-      // Reset Form
-      setFormData({ title: '', artist: '', imageUrl: '', downloadUrl: '', genre: 'Worship' });
-      setEditingTrack(null);
-      
-      // Visual feedback via alert for now (could be toast)
-      // alert(editingTrack ? "Música atualizada com sucesso!" : "Música adicionada com sucesso!");
-    } catch (err: any) {
-      console.error("Erro ao salvar:", err);
-      alert(`Erro ao salvar: ${err.message || 'Verifique se o banco de dados está inicializado.'}`);
-    } finally {
-        setIsSaving(false);
-    }
-  };
-
-  const handleSaveSettings = (e: React.FormEvent) => {
-    e.preventDefault();
-    saveSettings({ googleSheetsApiUrl: sheetsUrl });
-    setSyncMsg({ type: 'success', text: 'Configurações salvas localmente.' });
-  };
-
-  const handleSync = async () => {
-    if (!sheetsUrl) {
-      setSyncMsg({ type: 'error', text: 'Por favor, insira uma URL válida primeiro.' });
+  const handleSaveAndTest = async () => {
+    if (!apiUrl) {
+      setStatusMsg({ type: 'error', text: 'Por favor, insira uma URL válida.' });
       return;
     }
 
-    setIsSyncing(true);
-    setSyncMsg(null);
+    setIsTesting(true);
+    setStatusMsg(null);
 
     try {
-      saveSettings({ googleSheetsApiUrl: sheetsUrl });
+      // Salva URL
+      saveSettings({ googleSheetsApiUrl: apiUrl });
       
-      const count = await syncFromGoogleSheets(sheetsUrl);
+      // Testa conexão lendo os dados agora (Reusing sync function which now handles generic API)
+      const count = await syncFromGoogleSheets(apiUrl);
       
-      setSyncMsg({ 
-        type: 'success', 
-        text: `Sincronização concluída! ${count} músicas atualizadas/adicionadas no banco de dados.` 
-      });
+      if (count === 0) {
+          setStatusMsg({ type: 'error', text: 'Conectado, mas nenhum dado compatível foi encontrado. Verifique os nomes das colunas.' });
+      } else {
+          setStatusMsg({ type: 'success', text: `Sucesso! ${count} multitracks carregadas.` });
+          onUpdate(); 
+      }
     } catch (error: any) {
       console.error(error);
-      setSyncMsg({ 
+      setStatusMsg({ 
         type: 'error', 
-        text: error.message || 'Erro ao conectar.' 
+        text: 'Erro de conexão. Verifique se a Planilha está pública (Arquivo > Compartilhar > Publicar na Web).' 
       });
     } finally {
-      setIsSyncing(false);
+      setIsTesting(false);
     }
-  };
-
-  const handleDelete = (track: Track) => {
-    setTrackToDelete(track);
-    setIsModalOpen(true);
-  };
-
-  const confirmDelete = async () => {
-    if (!trackToDelete) return;
-    setIsDeleting(true);
-    
-    try {
-        await deleteTrackRemote(trackToDelete.id);
-        setIsModalOpen(false);
-        setTrackToDelete(null);
-    } catch (err: any) {
-        console.error("Erro ao deletar track:", err);
-        alert(`Erro ao excluir: ${err.message}`);
-    } finally {
-        setIsDeleting(false);
-    }
-  };
-
-  const handleEdit = (track: Track) => {
-    setEditingTrack(track);
-    setFormData({
-      title: track.title || '',
-      artist: track.artist || '',
-      imageUrl: track.imageUrl || '',
-      downloadUrl: track.downloadUrl || '',
-      genre: track.genre || 'Worship'
-    });
-  };
-
-  const handleCancelEdit = () => {
-      setEditingTrack(null);
-      setFormData({ title: '', artist: '', imageUrl: '', downloadUrl: '', genre: 'Worship' });
   };
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 overflow-y-auto flex items-center justify-center p-4">
-      <div className="bg-zinc-950 border border-zinc-800 w-full max-w-6xl h-[90vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden ring-1 ring-white/5">
+      <div className="bg-zinc-950 border border-zinc-800 w-full max-w-5xl h-[85vh] rounded-2xl flex flex-col shadow-2xl overflow-hidden ring-1 ring-white/5">
         
         {/* Header */}
         <header className="flex justify-between items-center p-6 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur">
           <div>
             <h1 className="text-xl font-bold text-white flex items-center gap-3 tracking-tight">
               <LayoutDashboard className="text-white" size={24} />
-              Search Multitracks <span className="text-zinc-600 font-normal">| Console</span>
+              Painel de Controle <span className="text-zinc-600 font-normal">| Conexão de Dados</span>
             </h1>
           </div>
-          <div className="flex items-center gap-4">
-              {/* DB Status Indicator */}
-              <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-wider border ${
-                  dbStatus === 'connected' ? 'bg-green-900/20 border-green-900 text-green-500' : 
-                  dbStatus === 'error' ? 'bg-red-900/20 border-red-900 text-red-500' : 'bg-zinc-800 border-zinc-700 text-zinc-500'
-              }`}>
-                  <Database size={12} />
-                  {dbStatus === 'connected' ? 'DB Conectado' : dbStatus === 'error' ? 'Erro Conexão' : 'Conectando...'}
-              </div>
-
-              <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition">
-                <X size={20} />
-              </button>
-          </div>
+          <button onClick={onClose} className="p-2 hover:bg-zinc-800 rounded-full text-zinc-400 hover:text-white transition">
+            <X size={20} />
+          </button>
         </header>
 
         {/* Navigation */}
         <div className="flex border-b border-zinc-800 bg-zinc-900/30 px-6">
           <button 
+            onClick={() => setActiveTab('settings')}
+            className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'settings' ? 'border-green-500 text-white' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
+          >
+            <Settings size={16} /> Configuração
+          </button>
+          <button 
             onClick={() => setActiveTab('tracks')}
             className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'tracks' ? 'border-white text-white' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
           >
-            <Music size={16} /> Tracks
+            <Music size={16} /> Visualizar Tracks ({tracks.length})
           </button>
           <button 
             onClick={() => setActiveTab('users')}
             className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'users' ? 'border-white text-white' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
           >
-            <Users size={16} /> Usuários
-          </button>
-          <button 
-            onClick={() => setActiveTab('settings')}
-            className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors flex items-center gap-2 ${activeTab === 'settings' ? 'border-white text-white' : 'border-transparent text-zinc-500 hover:text-zinc-300'}`}
-          >
-            <Settings size={16} /> Configurações
+            <Users size={16} /> Conta
           </button>
         </div>
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 bg-black/50">
+        <div className="flex-1 overflow-y-auto p-8 bg-black/50">
         
-        {activeTab === 'tracks' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            {/* Form */}
-            <div className="lg:col-span-1 bg-zinc-900/50 p-6 rounded-xl h-fit border border-zinc-800 sticky top-0">
-              <h3 className="text-lg font-bold text-white mb-6 flex items-center gap-2">
-                {editingTrack ? <Edit2 size={18} /> : <Plus size={18} />}
-                {editingTrack ? 'Editar Track' : 'Nova Track'}
-              </h3>
-              <form onSubmit={handleSaveTrack} className="space-y-5">
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">Título</label>
-                  <input 
-                    required 
-                    value={formData.title} 
-                    onChange={e => setFormData({...formData, title: e.target.value})} 
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-3 text-white text-sm focus:border-white outline-none transition-colors" 
-                    placeholder="Ex: Oceanos" 
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">Artista</label>
-                  <input 
-                    required 
-                    value={formData.artist} 
-                    onChange={e => setFormData({...formData, artist: e.target.value})} 
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-3 text-white text-sm focus:border-white outline-none transition-colors" 
-                    placeholder="Ex: Hillsong" 
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">Gênero</label>
-                  <select 
-                    value={formData.genre} 
-                    onChange={e => setFormData({...formData, genre: e.target.value})} 
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-3 text-white text-sm focus:border-white outline-none transition-colors appearance-none"
-                  >
-                      <option value="Worship">Worship</option>
-                      <option value="Rock">Rock</option>
-                      <option value="Pop">Pop</option>
-                      <option value="Instrumental">Instrumental</option>
-                      <option value="Ao Vivo">Ao Vivo</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">URL da Capa (Imagem)</label>
-                  <input 
-                    value={formData.imageUrl} 
-                    onChange={e => setFormData({...formData, imageUrl: e.target.value})} 
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-3 text-white text-sm focus:border-white outline-none transition-colors" 
-                    placeholder="https://exemplo.com/imagem.jpg" 
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-2">Link Download (Arquivo)</label>
-                  <input 
-                    value={formData.downloadUrl} 
-                    onChange={e => setFormData({...formData, downloadUrl: e.target.value})} 
-                    className="w-full bg-black border border-zinc-800 rounded-lg p-3 text-white text-sm focus:border-white outline-none transition-colors" 
-                    placeholder="https://exemplo.com/arquivo.zip" 
-                  />
-                </div>
-                
-                <div className="flex gap-2 pt-4">
-                  <button 
-                    type="submit" 
-                    disabled={isSaving || dbStatus === 'error'}
-                    className="flex-1 bg-white hover:bg-zinc-200 disabled:bg-zinc-800 disabled:text-zinc-600 disabled:cursor-not-allowed text-black font-bold py-3 rounded-lg flex justify-center items-center gap-2 text-sm transition-colors shadow-lg"
-                  >
-                    {isSaving ? <RefreshCw size={16} className="animate-spin"/> : <Save size={16} />} 
-                    {editingTrack ? 'Salvar Alterações' : 'Adicionar Track'}
-                  </button>
-                  {editingTrack && (
-                    <button type="button" onClick={handleCancelEdit} className="px-4 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg transition-colors">
-                      Cancelar
-                    </button>
-                  )}
-                </div>
-                {dbStatus === 'error' && (
-                    <p className="text-red-500 text-xs text-center mt-2">Erro: Banco de dados não conectado.</p>
-                )}
-              </form>
-            </div>
+        {/* --- SETTINGS TAB (MAIN) --- */}
+        {activeTab === 'settings' && (
+          <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
+             
+             {/* Connection Card */}
+             <div className="bg-zinc-900/50 p-8 rounded-xl border border-zinc-800">
+               <div className="flex items-center gap-4 mb-6">
+                 <div className="p-3 bg-green-900/20 text-green-500 border border-green-900/30 rounded-lg">
+                   <Globe size={32} />
+                 </div>
+                 <div>
+                   <h3 className="text-xl font-bold text-white">Google Sheets / API</h3>
+                   <p className="text-zinc-400 text-sm">Cole o link da sua planilha ou endpoint JSON abaixo.</p>
+                 </div>
+               </div>
+               
+               <div className="space-y-4">
+                 <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider">
+                     Link da Planilha ou API
+                 </label>
+                 <div className="flex gap-3">
+                     <input 
+                        type="url" 
+                        value={apiUrl}
+                        onChange={(e) => {
+                            setApiUrl(e.target.value);
+                            setStatusMsg(null); 
+                        }}
+                        placeholder="https://docs.google.com/spreadsheets/d/..."
+                        className="flex-1 bg-black border border-zinc-700 rounded-lg px-4 text-white focus:border-green-500 outline-none transition-all font-mono text-sm"
+                     />
+                     <button 
+                        onClick={handleSaveAndTest}
+                        disabled={isTesting}
+                        className="bg-white hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 text-black font-bold px-6 py-3 rounded-lg flex items-center gap-2 transition whitespace-nowrap"
+                     >
+                        {isTesting ? <RefreshCw size={18} className="animate-spin" /> : <CheckCircle2 size={18} />}
+                        Conectar
+                     </button>
+                 </div>
 
-            {/* List */}
-            <div className="lg:col-span-2 space-y-4">
-              <div className="flex justify-between items-center mb-2">
-                 <h3 className="text-lg font-bold text-white">Biblioteca Cloud ({tracks.length})</h3>
-                 <span className="text-xs text-green-500 uppercase tracking-wider flex items-center gap-1">
-                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span> Live
-                 </span>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-                {tracks.map(track => (
-                  <div key={track.id} className="bg-zinc-900/50 p-3 rounded-lg border border-zinc-800 flex gap-4 items-center group hover:border-white/30 transition-colors">
-                    <img 
-                        src={track.imageUrl} 
-                        alt={track.title} 
-                        className="w-12 h-12 rounded bg-black object-cover grayscale group-hover:grayscale-0 transition-all" 
-                        onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/150/000000/FFFFFF?text=Music'} 
-                    />
-                    <div className="flex-1 min-w-0">
-                      <h4 className="text-white font-medium text-sm truncate">{track.title}</h4>
-                      <p className="text-zinc-500 text-xs truncate">{track.artist} • {track.genre}</p>
+                 {/* Status Message */}
+                 {statusMsg && (
+                    <div className={`p-4 rounded-lg flex items-center gap-3 border mt-4 ${
+                        statusMsg.type === 'success' ? 'bg-green-900/10 border-green-900/30 text-green-400' : 'bg-red-900/10 border-red-900/30 text-red-400'
+                    }`}>
+                        {statusMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+                        <span className="text-sm font-medium">{statusMsg.text}</span>
                     </div>
-                    <div className="flex gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => handleEdit(track)} className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded"><Edit2 size={14} /></button>
-                      <button onClick={() => handleDelete(track)} className="p-2 text-zinc-400 hover:text-red-500 hover:bg-zinc-800 rounded"><Trash2 size={14} /></button>
+                 )}
+               </div>
+             </div>
+
+             {/* Instructions Card */}
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-zinc-900/30 p-6 rounded-xl border border-zinc-800">
+                    <h4 className="font-bold text-white mb-4 flex items-center gap-2">
+                        <Code2 size={16} /> Estrutura da Planilha
+                    </h4>
+                    <p className="text-zinc-400 text-xs mb-4">
+                        A primeira linha da sua planilha deve conter exatamente estes nomes (maiúsculo ou minúsculo):
+                    </p>
+                    <div className="space-y-2 font-mono text-xs">
+                         <div className="flex justify-between p-2 bg-black border border-zinc-800 rounded">
+                             <span className="text-green-400">Musica</span>
+                             <span className="text-zinc-500">Nome da música</span>
+                         </div>
+                         <div className="flex justify-between p-2 bg-black border border-zinc-800 rounded">
+                             <span className="text-green-400">Banda</span>
+                             <span className="text-zinc-500">Artista ou Banda</span>
+                         </div>
+                         <div className="flex justify-between p-2 bg-black border border-zinc-800 rounded">
+                             <span className="text-green-400">Link</span>
+                             <span className="text-zinc-500">Link de Download</span>
+                         </div>
+                         <div className="flex justify-between p-2 bg-black border border-zinc-800 rounded">
+                             <span className="text-green-400">Capa</span>
+                             <span className="text-zinc-500">URL da Imagem</span>
+                         </div>
                     </div>
-                  </div>
-                ))}
-                {tracks.length === 0 && (
-                    <div className="col-span-2 text-center py-10 text-zinc-600 text-sm border border-dashed border-zinc-800 rounded-lg">
-                        {dbStatus === 'connected' ? 'Nenhuma música encontrada. Adicione a primeira!' : 'Aguardando conexão...'}
+                </div>
+
+                <div className="bg-zinc-900/30 p-6 rounded-xl border border-zinc-800">
+                    <h4 className="font-bold text-white mb-4 flex items-center gap-2">
+                        <HelpCircle size={16} /> Importante
+                    </h4>
+                    <ul className="text-xs text-zinc-400 space-y-3 list-disc list-inside">
+                        <li>
+                            No Google Sheets, vá em <strong>Arquivo {'>'} Compartilhar {'>'} Publicar na Web</strong>.
+                        </li>
+                        <li>
+                            Certifique-se de que a coluna <strong>Link</strong> contém a URL completa para o arquivo (Drive, Dropbox, etc).
+                        </li>
+                        <li>
+                            A coluna <strong>Capa</strong> deve ser um link direto de imagem (terminando em .jpg ou .png).
+                        </li>
+                    </ul>
+                </div>
+             </div>
+
+          </div>
+        )}
+        
+        {/* --- TRACKS LIST TAB (READ ONLY) --- */}
+        {activeTab === 'tracks' && (
+          <div className="max-w-6xl mx-auto">
+             <div className="flex justify-between items-center mb-6">
+                 <div>
+                    <h3 className="text-lg font-bold text-white">Dados Recebidos</h3>
+                    <p className="text-zinc-500 text-sm">Visualização em tempo real da base de dados.</p>
+                 </div>
+                 <a 
+                    href={apiUrl} 
+                    target="_blank" 
+                    rel="noreferrer"
+                    className="flex items-center gap-2 text-xs font-bold uppercase text-green-500 hover:text-green-400 bg-green-900/20 px-4 py-2 rounded-lg border border-green-900/50 transition"
+                 >
+                    <ExternalLink size={14} /> Abrir Planilha
+                 </a>
+             </div>
+             
+             {tracks.length === 0 ? (
+                 <div className="text-center py-20 border border-dashed border-zinc-800 rounded-xl bg-zinc-900/20">
+                     <p className="text-zinc-500">Nenhum dado encontrado. Verifique as colunas da planilha.</p>
+                 </div>
+             ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {tracks.map((track, idx) => (
+                    <div key={idx} className="bg-zinc-900/50 p-4 rounded-lg border border-zinc-800 flex gap-4 items-center group">
+                        <img 
+                            src={track.imageUrl} 
+                            alt={track.title} 
+                            className="w-14 h-14 rounded bg-black object-cover" 
+                            onError={(e) => (e.target as HTMLImageElement).src = 'https://via.placeholder.com/150'} 
+                        />
+                        <div className="flex-1 min-w-0">
+                            <h4 className="text-white font-bold text-sm truncate">{track.title}</h4>
+                            <p className="text-zinc-400 text-xs truncate">{track.artist}</p>
+                            <div className="flex gap-2 mt-1">
+                                {track.downloadUrl ? (
+                                    <span className="text-[9px] bg-green-900/30 text-green-400 px-1.5 py-0.5 rounded border border-green-900/50">LINK OK</span>
+                                ) : (
+                                    <span className="text-[9px] bg-red-900/30 text-red-400 px-1.5 py-0.5 rounded border border-red-900/50">SEM LINK</span>
+                                )}
+                            </div>
+                        </div>
                     </div>
-                )}
-              </div>
-            </div>
+                    ))}
+                </div>
+             )}
           </div>
         )}
 
+        {/* --- USERS TAB --- */}
         {activeTab === 'users' && (
-           <div className="bg-zinc-900/50 p-10 rounded-xl border border-zinc-800 text-center max-w-2xl mx-auto mt-10">
+           <div className="bg-zinc-900/50 p-10 rounded-xl border border-zinc-800 text-center max-w-xl mx-auto mt-10">
              <div className="w-20 h-20 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
                 <Users size={32} className="text-zinc-400" />
              </div>
-             <h3 className="text-xl font-bold text-white">Administrador</h3>
-             <div className="mt-6 inline-block bg-black border border-zinc-800 p-6 rounded-lg text-left w-full">
-               <div className="flex justify-between border-b border-zinc-800 pb-2 mb-2">
-                   <span className="text-xs text-zinc-500 uppercase">Status</span>
-                   <span className="text-xs text-green-500 font-bold uppercase flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span> Online</span>
-               </div>
-               <p className="text-sm text-zinc-400">ID: <span className="text-white font-mono ml-2">{user.uid}</span></p>
-               <p className="text-sm text-zinc-400">Email: <span className="text-white font-mono ml-2">{user.email}</span></p>
+             <h3 className="text-xl font-bold text-white">Conta Conectada</h3>
+             <p className="text-zinc-500 text-sm mb-6">Você está logado via Firebase Auth.</p>
+             
+             <div className="bg-black border border-zinc-800 p-4 rounded-lg text-left w-full space-y-2">
+               <p className="text-sm text-zinc-400 flex justify-between">
+                   <span>Email:</span> 
+                   <span className="text-white">{user.email}</span>
+               </p>
+               <p className="text-sm text-zinc-400 flex justify-between">
+                   <span>UID:</span> 
+                   <span className="text-white font-mono text-xs">{user.uid}</span>
+               </p>
              </div>
            </div>
         )}
 
-        {/* --- SETTINGS TAB --- */}
-        {activeTab === 'settings' && (
-          <div className="max-w-3xl mx-auto mt-6">
-             <div className="bg-zinc-900/50 p-8 rounded-xl border border-zinc-800 relative overflow-hidden">
-               
-               <div className="flex items-center gap-4 mb-8">
-                 <div className="p-3 bg-zinc-800 rounded-lg text-white">
-                   <LinkIcon size={24} />
-                 </div>
-                 <div>
-                   <h3 className="text-xl font-bold text-white">Conexão de Dados</h3>
-                   <p className="text-zinc-500 text-sm">Sincronização via Google Sheets ou API JSON para o Banco de Dados.</p>
-                 </div>
-               </div>
-               
-               <div className="space-y-6">
-                 <div>
-                   <label className="block text-xs font-bold text-zinc-500 uppercase tracking-wider mb-2">
-                     Endpoint URL
-                   </label>
-                   <div className="relative">
-                     <input 
-                        type="url" 
-                        value={sheetsUrl}
-                        onChange={(e) => {
-                            setSheetsUrl(e.target.value);
-                            setSyncMsg(null); 
-                        }}
-                        placeholder="https://docs.google.com/spreadsheets/d/..."
-                        className="w-full bg-black border border-zinc-700 rounded-lg py-3 pl-4 pr-4 text-white focus:border-white outline-none transition-all font-mono text-sm"
-                     />
-                   </div>
-                   <div className="mt-4 p-4 bg-zinc-950 rounded-lg border border-zinc-800/50 text-xs text-zinc-500">
-                     <p className="mb-2 font-bold text-zinc-400 uppercase">Mapeamento Automático:</p>
-                     <div className="grid grid-cols-2 gap-2 font-mono">
-                        <span>Title / Nome</span>
-                        <span>Artist / Banda</span>
-                        <span>ImageUrl / Capa</span>
-                        <span>DownloadUrl / Link</span>
-                     </div>
-                   </div>
-                 </div>
-
-                 {/* Feedback Message */}
-                 {syncMsg && (
-                    <div className={`p-4 rounded-lg flex items-center gap-3 border ${
-                        syncMsg.type === 'success' ? 'bg-zinc-900 border-zinc-700 text-white' : 'bg-red-900/10 border-red-900/30 text-red-400'
-                    }`}>
-                        {syncMsg.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-                        <span className="text-sm font-medium">{syncMsg.text}</span>
-                    </div>
-                 )}
-
-                 <div className="pt-6 border-t border-zinc-800 flex gap-3">
-                    <button 
-                        onClick={handleSync}
-                        disabled={isSyncing}
-                        className="flex-1 bg-white hover:bg-zinc-200 disabled:bg-zinc-700 disabled:text-zinc-500 text-black font-bold py-3 rounded-lg flex justify-center items-center gap-2 transition"
-                    >
-                        {isSyncing ? (
-                            <RefreshCw size={18} className="animate-spin" />
-                        ) : (
-                            <DownloadCloud size={18} />
-                        )}
-                        {isSyncing ? 'Enviando para Nuvem...' : 'Sincronizar Base de Dados'}
-                    </button>
-                    
-                    <button 
-                        onClick={handleSaveSettings} 
-                        className="px-6 bg-zinc-800 hover:bg-zinc-700 text-white font-medium py-3 rounded-lg transition"
-                    >
-                      <Save size={18} />
-                    </button>
-                 </div>
-               </div>
-             </div>
-          </div>
-        )}
         </div>
       </div>
-
-      {/* Modal de Confirmação de Exclusão */}
-      {isModalOpen && trackToDelete && (
-          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[70]">
-              <div className="bg-zinc-900 p-6 rounded-xl border border-zinc-800 w-full max-w-sm shadow-2xl animate-fade-in-up">
-                  <h3 className="text-lg font-bold text-white mb-2">Excluir Item?</h3>
-                  <p className="text-zinc-400 text-sm mb-6">
-                      A track <span className="text-white font-medium">"{trackToDelete.title}"</span> será removida permanentemente do banco de dados.
-                  </p>
-                  <div className="flex justify-end gap-3">
-                      <button 
-                          disabled={isDeleting}
-                          onClick={() => {setIsModalOpen(false); setTrackToDelete(null);}}
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white text-sm rounded-lg transition"
-                      >
-                          Cancelar
-                      </button>
-                      <button 
-                          disabled={isDeleting}
-                          onClick={confirmDelete}
-                          className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-900 text-white text-sm rounded-lg font-bold transition flex items-center gap-2"
-                      >
-                          {isDeleting ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />} 
-                          {isDeleting ? 'Excluindo...' : 'Excluir Definitivamente'}
-                      </button>
-                  </div>
-              </div>
-          </div>
-      )}
     </div>
   );
 };

@@ -4,130 +4,7 @@ import { db as initialDb, firebase } from './firebase';
 const STORAGE_KEY_SETTINGS = 'search_multitracks_settings';
 const STORAGE_KEY_USER = 'search_multitracks_user';
 
-// --- HELPER TO ENSURE DB ---
-// Tries to get the exported db, or re-accesses it from firebase instance if available
-const getDb = () => {
-    if (initialDb) return initialDb;
-    if (firebase && typeof firebase.firestore === 'function') {
-        try {
-             return firebase.firestore();
-        } catch (e) {
-             console.error("Failed to lazy load firestore", e);
-        }
-    }
-    // Try to get from global window if desperation strikes (helps in some environments)
-    if ((window as any).firebase && typeof (window as any).firebase.firestore === 'function') {
-        return (window as any).firebase.firestore();
-    }
-    return null;
-};
-
-// --- TRACKS SERVICE (FIRESTORE) ---
-
-const TRACKS_COLLECTION = 'tracks';
-
-/**
- * Inscreve-se para receber atualizações em tempo real das tracks.
- * @param callback Função chamada quando os dados mudam.
- * @returns Função para cancelar a inscrição.
- */
-export const listenToTracks = (callback: (tracks: Track[]) => void) => {
-  const database = getDb();
-  if (!database) {
-    console.error("Database not initialized");
-    callback([]);
-    return () => {};
-  }
-
-  // Compat Syntax: db.collection()
-  try {
-      const unsubscribe = database.collection(TRACKS_COLLECTION).onSnapshot((snapshot: any) => {
-        const tracks: Track[] = [];
-        snapshot.forEach((doc: any) => {
-          tracks.push(doc.data() as Track);
-        });
-        callback(tracks);
-      }, (error: any) => {
-        console.error("Error listening to tracks:", error);
-      });
-      return unsubscribe;
-  } catch (err) {
-      console.error("Firestore connection error:", err);
-      return () => {};
-  }
-};
-
-/**
- * Salva ou atualiza uma track no Firestore.
- */
-export const saveTrackRemote = async (track: Partial<Track>): Promise<void> => {
-  const database = getDb();
-  if (!database) throw new Error("Database not initialized");
-
-  // Generate ID if not present
-  const id = track.id || database.collection(TRACKS_COLLECTION).doc().id;
-  
-  // Reference
-  const trackRef = database.collection(TRACKS_COLLECTION).doc(id);
-
-  // Default values for a new track
-  const defaults = {
-    id: id,
-    title: 'Sem título',
-    artist: 'Artista Desconhecido',
-    imageUrl: '',
-    downloadUrl: '',
-    genre: 'Worship',
-    searchCount: 0,
-    createdAt: new Date().toISOString()
-  };
-
-  const dataToSave: any = { ...defaults };
-  
-  Object.keys(track).forEach((key) => {
-      const value = (track as any)[key];
-      if (value !== undefined) {
-          dataToSave[key] = value;
-      }
-  });
-  
-  dataToSave.id = id;
-
-  // Compat Syntax: ref.set(data, options)
-  await trackRef.set(dataToSave, { merge: true });
-};
-
-/**
- * Remove uma track do Firestore.
- */
-export const deleteTrackRemote = async (id: string): Promise<void> => {
-  const database = getDb();
-  if (!database) throw new Error("Database not initialized");
-  await database.collection(TRACKS_COLLECTION).doc(id).delete();
-};
-
-/**
- * Incrementa o contador de busca atomicamente no Firestore.
- */
-export const incrementSearchCountRemote = async (id: string): Promise<void> => {
-  const database = getDb();
-  if (!database || !firebase) return;
-  try {
-    // Compat Syntax: FieldValue.increment
-    // Check where FieldValue resides
-    const FieldValue = firebase.firestore?.FieldValue || (window as any).firebase?.firestore?.FieldValue;
-    
-    if (FieldValue) {
-        await database.collection(TRACKS_COLLECTION).doc(id).update({
-          searchCount: FieldValue.increment(1)
-        });
-    }
-  } catch (e) {
-    console.error("Error updating count:", e);
-  }
-};
-
-// --- SETTINGS SERVICE (LOCAL STORAGE - Configuração por dispositivo) ---
+// --- SETTINGS SERVICE (LOCAL STORAGE) ---
 
 export const getSettings = (): AppSettings => {
   const stored = localStorage.getItem(STORAGE_KEY_SETTINGS);
@@ -141,125 +18,221 @@ export const saveSettings = (settings: AppSettings): void => {
   localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
 };
 
-// --- INTEGRATION SERVICE ---
+// --- DATA PARSERS ---
 
-const parseCSV = (csvText: string): any[] => {
+// Helper para normalizar chaves de objetos JSON ou CSV (remove espaços e deixa minúsculo)
+const normalizeKeys = (obj: any): any => {
+    const newObj: any = {};
+    Object.keys(obj).forEach(key => {
+        newObj[key.trim().toLowerCase()] = obj[key];
+    });
+    return newObj;
+};
+
+const mapObjectToTrack = (rawObj: any, index: number): Track | null => {
+    const obj = normalizeKeys(rawObj);
+    
+    // --- MAPEAMENTO DE COLUNAS (Prioridade para os nomes solicitados) ---
+    
+    // 1. Título da Música (Coluna: "Musica")
+    const title = obj.musica || obj.nome || obj.title || obj.titulo || obj.name || obj.track || '';
+    
+    if (!title) return null; // Se não tiver nome, ignora a linha
+
+    // 2. ID único (Gera automático se não tiver)
+    const id = obj.id ? String(obj.id) : `track-${index}-${Date.now()}`;
+    
+    // 3. Artista / Banda (Coluna: "Banda")
+    const artist = obj.banda || obj.artista || obj.artist || obj.cantor || obj.grupo || 'Desconhecido';
+    
+    // 4. Imagem da Capa (Coluna: "Capa")
+    const imageUrl = obj.capa || obj.imagem || obj.foto || obj.imageurl || obj.image || obj.cover || '';
+    
+    // 5. Link de Download (Coluna: "Link")
+    const downloadUrl = obj.link || obj.url || obj.download || obj.downloadurl || obj.arquivo || '';
+    
+    // 6. Gênero (Opcional)
+    const genre = obj.genero || obj.estilo || obj.genre || obj.categoria || 'Worship';
+    
+    // 7. Data (Opcional)
+    const createdAt = obj.data || obj.createdat || obj.date || new Date().toISOString();
+    
+    // 8. Contagem (Opcional)
+    const searchCount = Number(obj.views || obj.searchcount || 0);
+
+    return {
+        id,
+        title,
+        artist,
+        imageUrl,
+        downloadUrl,
+        genre,
+        searchCount,
+        createdAt
+    };
+};
+
+const parseJSON = (json: any): Track[] => {
+    let items: any[] = [];
+    
+    // Tenta encontrar o array de dados dentro do JSON
+    if (Array.isArray(json)) {
+        items = json;
+    } else if (json && typeof json === 'object') {
+        // Suporte para estruturas { data: [...] }, { items: [...] }, { tracks: [...] }
+        items = json.data || json.items || json.tracks || json.results || [];
+    }
+
+    if (!Array.isArray(items)) return [];
+
+    const tracks: Track[] = [];
+    items.forEach((item, index) => {
+        const track = mapObjectToTrack(item, index);
+        if (track) tracks.push(track);
+    });
+    return tracks;
+};
+
+const parseCSV = (csvText: string): Track[] => {
   const lines = csvText.split(/\r?\n/).filter(l => l.trim());
   if (lines.length < 2) return [];
   
+  // Normaliza o cabeçalho para minúsculo para facilitar o match
   const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, '').toLowerCase());
   
-  const result = [];
+  const tracks: Track[] = [];
   
   for (let i = 1; i < lines.length; i++) {
     const currentLine = lines[i];
+    // Regex complexo para separar CSV respeitando aspas
     const values = currentLine.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
     
     const obj: any = {};
     headers.forEach((header, index) => {
         let val = values[index] ? values[index].trim() : '';
+        // Remove aspas extras se existirem
         if (val.startsWith('"') && val.endsWith('"')) {
             val = val.substring(1, val.length - 1);
         }
-        val = val.replace(/""/g, '"');
+        val = val.replace(/""/g, '"'); 
         obj[header] = val;
     });
-    result.push(obj);
+
+    const track = mapObjectToTrack(obj, i);
+    if (track) tracks.push(track);
   }
-  return result;
+  return tracks;
 };
 
-export const syncFromGoogleSheets = async (url: string): Promise<number> => {
-  if (!url) throw new Error("URL não configurada.");
-  const database = getDb();
-  if (!database) throw new Error("Banco de dados não conectado.");
+const fetchData = async (url: string): Promise<Track[]> => {
+    if (!url) return [];
 
-  let fetchUrl = url;
+    let fetchUrl = url;
+    let isGoogleSheet = false;
+    
+    // Verifica se é uma URL do Google Sheets
+    if (url.includes('docs.google.com/spreadsheets')) {
+        isGoogleSheet = true;
+        // Se não tiver /export, tenta converter
+        if (!url.includes('/export')) {
+            const idMatch = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
+            if (idMatch && idMatch[1]) {
+                const spreadsheetId = idMatch[1];
+                const gidMatch = url.match(/[#&?]gid=([0-9]+)/);
+                const gidParam = gidMatch ? `&gid=${gidMatch[1]}` : '';
+                fetchUrl = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/export?format=csv${gidParam}`;
+            }
+        }
+    }
 
-  if (url.includes('docs.google.com/spreadsheets') && !url.includes('/export')) {
-    const match = url.match(/\/d\/([a-zA-Z0-9-_]+)/);
-    if (match && match[1]) {
-        fetchUrl = `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv`;
-    }
-  }
-  
-  let textData = '';
-  try {
-    const response = await fetch(fetchUrl);
-    if (response.ok) {
-        textData = await response.text();
-    } else {
-        throw new Error("Direct fetch failed");
-    }
-  } catch (err) {
+    // Cache busting para garantir dados frescos
+    const separator = fetchUrl.includes('?') ? '&' : '?';
+    const timestampedUrl = `${fetchUrl}${separator}t=${Date.now()}`;
+
     try {
-        const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(fetchUrl)}&disableCache=${Date.now()}`;
-        const response = await fetch(proxyUrl);
-        if (!response.ok) throw new Error(`Proxy Error: ${response.status}`);
-        textData = await response.text();
-    } catch (proxyErr) {
-        throw new Error("Falha na conexão com a planilha.");
+        const response = await fetch(timestampedUrl, {
+            headers: {
+                'Accept': 'application/json, text/csv, text/plain'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`Erro na API (${response.status})`);
+        }
+
+        const contentType = response.headers.get('content-type');
+        
+        // 1. Tenta processar como JSON
+        if (!isGoogleSheet && (contentType?.includes('application/json') || url.endsWith('.json'))) {
+             try {
+                 const jsonData = await response.json();
+                 return parseJSON(jsonData);
+             } catch (e) {
+                 console.warn("Falha ao parsear JSON, tentando texto...", e);
+             }
+        }
+
+        // 2. Fallback: Pega como texto (CSV)
+        const textData = await response.text();
+
+        try {
+            const jsonFromText = JSON.parse(textData);
+            return parseJSON(jsonFromText);
+        } catch (e) {
+            return parseCSV(textData);
+        }
+
+    } catch (error) {
+        console.warn("Fetch direto falhou, tentando proxy...", error);
+        // Fallback Proxy
+        try {
+            const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(fetchUrl)}&disableCache=${Date.now()}`;
+            const response = await fetch(proxyUrl);
+            const textData = await response.text();
+            
+            try {
+                return parseJSON(JSON.parse(textData));
+            } catch {
+                return parseCSV(textData);
+            }
+        } catch (e) {
+            console.error("Erro fatal na conexão API:", e);
+            return [];
+        }
     }
-  }
-
-  let items: any[] = [];
-  try {
-      if (textData.trim().startsWith('[') || textData.trim().startsWith('{')) {
-        const json = JSON.parse(textData);
-        items = Array.isArray(json) ? json : (json.data || json.items || []);
-      } else {
-        items = parseCSV(textData);
-      }
-  } catch (e) {
-      items = parseCSV(textData);
-  }
-  
-  if (!Array.isArray(items)) throw new Error("Formato de dados inválido.");
-
-  const snapshot = await database.collection(TRACKS_COLLECTION).get();
-  const currentTracks: Track[] = [];
-  snapshot.forEach((doc: any) => currentTracks.push(doc.data() as Track));
-
-  let updatedCount = 0;
-  const normalize = (str: any) => str ? String(str).trim().toLowerCase() : '';
-
-  const promises = items.map(async (item: any) => {
-      const title = item.title || item.nome || item.name || item.titulo || item.musica || item['nome da música'] || '';
-      const artist = item.artist || item.artista || item.cantor || item.banda || item['nome da banda'] || '';
-      
-      if (!title) return;
-
-      const imageUrl = item.imageUrl || item.image || item.imagem || item.capa || item.foto || item['link da capa'] || '';
-      const downloadUrl = item.downloadUrl || item.download || item.link || item.url || item.arquivo || item['link de download'] || '';
-      const genre = item.genre || item.genero || item.estilo || item.style || item.categoria || 'Worship';
-
-      let existingTrack = currentTracks.find(t => 
-          (item.id && t.id === String(item.id)) || 
-          (normalize(t.title) === normalize(title) && normalize(t.artist) === normalize(artist))
-      );
-
-      const trackId = existingTrack ? existingTrack.id : (item.id ? String(item.id) : Date.now().toString() + Math.random().toString(36).substr(2, 5));
-
-      const newTrackData: Partial<Track> = {
-          id: trackId,
-          title: title,
-          artist: artist || 'Desconhecido',
-          imageUrl: imageUrl,
-          downloadUrl: downloadUrl,
-          genre: genre,
-          searchCount: existingTrack ? existingTrack.searchCount : 0,
-          createdAt: existingTrack?.createdAt || new Date().toISOString()
-      };
-
-      await saveTrackRemote(newTrackData);
-      updatedCount++;
-  });
-
-  await Promise.all(promises);
-  return updatedCount;
 };
 
-// --- AUTH SERVICE (LOCAL SESSION) ---
+// --- CORE SERVICE ---
+
+export const listenToTracks = (callback: (tracks: Track[]) => void) => {
+  const settings = getSettings();
+  
+  if (!settings.googleSheetsApiUrl) {
+      console.warn("URL da API não configurada.");
+      callback([]);
+      return () => {};
+  }
+
+  let isActive = true;
+
+  const loadData = async () => {
+      if (!isActive) return;
+      const tracks = await fetchData(settings.googleSheetsApiUrl);
+      if (isActive) callback(tracks);
+  };
+
+  loadData();
+  
+  // Atualiza a cada 60s
+  const intervalId = setInterval(loadData, 60000);
+
+  return () => {
+      isActive = false;
+      clearInterval(intervalId);
+  };
+};
+
+// --- AUTH SERVICE ---
 
 export const getCurrentUser = (): User | null => {
   const stored = localStorage.getItem(STORAGE_KEY_USER);
@@ -279,9 +252,21 @@ export const logoutUser = (): void => {
   localStorage.removeItem(STORAGE_KEY_USER);
 };
 
-export const getTracks = (): Track[] => {
-    return []; 
+// --- STUBS ---
+
+export const saveTrackRemote = async (track: Partial<Track>): Promise<void> => {
+  console.warn("Modo API: Edição deve ser feita na fonte de dados.");
 };
-export const saveTrack = (t: Partial<Track>) => saveTrackRemote(t); 
-export const deleteTrack = (id: string) => deleteTrackRemote(id); 
-export const incrementSearchCount = (id: string) => incrementSearchCountRemote(id);
+
+export const deleteTrackRemote = async (id: string): Promise<void> => {
+    console.warn("Modo API: Exclusão deve ser feita na fonte de dados.");
+};
+
+export const incrementSearchCountRemote = async (id: string): Promise<void> => {
+   // Analytics stub
+};
+
+export const syncFromGoogleSheets = async (url: string): Promise<number> => {
+    const tracks = await fetchData(url);
+    return tracks.length;
+};

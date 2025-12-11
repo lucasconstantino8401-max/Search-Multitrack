@@ -241,11 +241,14 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   const [activeCategory, setActiveCategory] = useState("Todos");
   const [selectedTrack, setSelectedTrack] = useState<Track | null>(null);
   const [loadingData, setLoadingData] = useState(true);
+  
+  // Controle de atualização vinda do Admin
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
   // Check Permissions
   const isAdmin = ADMIN_EMAILS.includes(user.email);
 
-  // 1. Setup Data Listener (Runs once on mount)
+  // 1. Setup Data Listener (Runs on mount OR when refreshTrigger changes)
   useEffect(() => {
     setLoadingData(true);
     const unsubscribe = listenToTracks((allTracks) => {
@@ -271,7 +274,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [refreshTrigger]);
 
   // 2. Filter Logic (Runs when tracks update OR activeSearchTerm changes)
   useEffect(() => {
@@ -326,7 +329,7 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
     if (selectedTrack.downloadUrl && selectedTrack.downloadUrl !== '#') {
        window.open(selectedTrack.downloadUrl, '_blank');
     }
-    // Incrementa contagem no Firestore
+    // Incrementa contagem no Firestore (Analytics)
     await incrementSearchCountRemote(selectedTrack.id);
   };
 
@@ -337,8 +340,8 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   };
 
   const handleAdminUpdate = () => {
-    // Não é necessário recarregar manualmente pois o ouvinte (listenToTracks) cuida disso
-    console.log("Admin update triggered - waiting for realtime sync");
+    console.log("Reloading data from new settings...");
+    setRefreshTrigger(prev => prev + 1);
   };
 
   return (
