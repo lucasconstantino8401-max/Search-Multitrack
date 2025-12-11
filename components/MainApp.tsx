@@ -246,8 +246,10 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
   // Controle de atualização vinda do Admin
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Check Permissions
-  const isAdmin = ADMIN_EMAILS.includes(user.email);
+  // Check Permissions (Case Insensitive)
+  const isAdmin = ADMIN_EMAILS.some(email => 
+    email.toLowerCase() === (user.email || '').toLowerCase()
+  );
 
   // 1. Setup Data Listener (Runs on mount OR when refreshTrigger changes)
   useEffect(() => {
@@ -356,15 +358,33 @@ const MainApp: React.FC<MainAppProps> = ({ user, onLogout }) => {
         </div>
         <div className="flex items-center gap-4">
             {isAdmin && (
-                <button onClick={() => setShowAdmin(true)} className="text-zinc-400 hover:text-black transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-zinc-900 hover:bg-white px-4 py-2 rounded-full border border-white/10 hover:border-transparent">
+                <button onClick={() => setShowAdmin(true)} className="group relative text-zinc-400 hover:text-black transition flex items-center gap-2 text-xs font-bold uppercase tracking-wider bg-zinc-900 hover:bg-white px-4 py-2 rounded-full border border-white/10 hover:border-transparent overflow-hidden shadow-lg shadow-black/50">
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:animate-[shimmer_1s_infinite]"></div>
                     <LayoutDashboard size={14} /> <span className="hidden sm:inline">Admin</span>
                 </button>
             )}
             
-            <div className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-white font-bold text-sm shadow-lg">
-                {user.email ? user.email[0].toUpperCase() : 'U'}
+            <div className="flex items-center gap-3 pl-2 border-l border-white/10">
+                {/* User Info & Badge */}
+                <div className="hidden md:flex flex-col items-end">
+                    <span className="text-xs font-bold text-white leading-none mb-0.5 max-w-[100px] truncate">{user.displayName?.split(' ')[0] || 'Usuário'}</span>
+                    {isAdmin && (
+                        <span className="text-[9px] font-black text-black bg-white px-1.5 rounded uppercase tracking-widest flex items-center justify-center">
+                            PRO
+                        </span>
+                    )}
+                </div>
+
+                <div className="w-9 h-9 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-white font-bold text-sm shadow-lg relative overflow-hidden">
+                    {user.photoURL ? (
+                        <img src={user.photoURL} alt="User" className="w-full h-full object-cover" />
+                    ) : (
+                        <span>{user.email ? user.email[0].toUpperCase() : 'U'}</span>
+                    )}
+                </div>
             </div>
-            <button onClick={onLogout} className="text-zinc-500 hover:text-white transition p-2 hover:bg-zinc-900 rounded-full">
+
+            <button onClick={onLogout} className="text-zinc-500 hover:text-white transition p-2 hover:bg-zinc-900 rounded-full" title="Sair">
                 <LogOut size={18} />
             </button>
         </div>
