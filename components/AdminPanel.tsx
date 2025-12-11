@@ -12,7 +12,9 @@ import {
   Globe,
   ExternalLink,
   Code2,
-  HelpCircle
+  HelpCircle,
+  ShieldAlert,
+  Copy
 } from 'lucide-react';
 import { 
     listenToTracks,
@@ -30,6 +32,9 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
   const [apiUrl, setApiUrl] = useState('');
   const [isTesting, setIsTesting] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{type: 'success' | 'error', text: string} | null>(null);
+  
+  // Rule Helper State
+  const [showRulesHelper, setShowRulesHelper] = useState(false);
 
   useEffect(() => {
     // Carregar configurações globais (Firestore)
@@ -58,9 +63,10 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
 
     setIsTesting(true);
     setStatusMsg(null);
+    setShowRulesHelper(false);
 
     try {
-      // 1. Testa a conexão primeiro
+      // 1. Testa a conexão primeiro (Leitura da planilha pública)
       const count = await syncFromGoogleSheets(apiUrl);
       
       if (count === 0) {
@@ -69,7 +75,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
           return;
       } 
 
-      // 2. Se deu certo, salva na Nuvem (Firestore)
+      // 2. Se deu certo, tenta salvar na Nuvem (Firestore)
       await saveSettingsRemote({ googleSheetsApiUrl: apiUrl });
       
       setStatusMsg({ type: 'success', text: `Sucesso! Configuração salva na nuvem. ${count} tracks carregadas.` });
@@ -77,21 +83,45 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
       
     } catch (error: any) {
       console.error(error);
-      let errorText = 'Erro de conexão.';
-      if (error.message && error.message.includes('permissões')) {
-          errorText = 'Erro de permissão no Banco de Dados.';
-      } else {
-          errorText = 'Erro ao acessar a planilha. Verifique se ela está pública na Web.';
-      }
       
-      setStatusMsg({ 
-        type: 'error', 
-        text: errorText
-      });
+      // DETECTA O ERRO DE PERMISSÃO ESPECIFICAMENTE
+      if (error.code === 'permission-denied' || error.message?.toLowerCase().includes('permission') || error.message?.toLowerCase().includes('permissão')) {
+          setStatusMsg({ 
+              type: 'error', 
+              text: 'Acesso Negado: O Firebase bloqueou a gravação por segurança.' 
+          });
+          setShowRulesHelper(true);
+      } else {
+          let errorText = 'Erro desconhecido ao salvar.';
+          if (error.message) errorText = error.message;
+          
+          setStatusMsg({ 
+            type: 'error', 
+            text: errorText
+          });
+      }
     } finally {
       setIsTesting(false);
     }
   };
+
+  const rulesCode = `rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Configuração do App (Só Admin edita)
+    match /app_config/main {
+      allow read: if true;
+      allow write: if request.auth != null && (
+        request.auth.token.email == '${user.email}' ||
+        request.auth.token.email == 'admin@searchmultitracks.com'
+      );
+    }
+    // Analytics (Todos podem incrementar contagem)
+    match /analytics/{document=**} {
+       allow read, write: if true;
+    }
+  }
+}`;
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-50 overflow-y-auto flex items-center justify-center p-4">
@@ -162,6 +192,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                         onChange={(e) => {
                             setApiUrl(e.target.value);
                             setStatusMsg(null); 
+                            setShowRulesHelper(false);
                         }}
                         placeholder="https://docs.google.com/spreadsheets/d/..."
                         className="flex-1 bg-black border border-zinc-700 rounded-lg px-4 text-white focus:border-green-500 outline-none transition-all font-mono text-sm"
@@ -185,10 +216,52 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                         <span className="text-sm font-medium">{statusMsg.text}</span>
                     </div>
                  )}
+
+                 {/* --- RULES HELPER (SHOWS ON PERMISSION ERROR) --- */}
+                 {showRulesHelper && (
+                     <div className="mt-6 border border-amber-900/50 bg-amber-900/10 rounded-xl overflow-hidden animate-fade-in-up">
+                        <div className="p-4 bg-amber-900/20 border-b border-amber-900/30 flex items-center gap-3">
+                            <ShieldAlert className="text-amber-500" size={20} />
+                            <h4 className="font-bold text-amber-500 text-sm uppercase tracking-wide">Ação Necessária: Configure as Regras do Firestore</h4>
+                        </div>
+                        <div className="p-6">
+                            <p className="text-zinc-300 text-sm mb-4">
+                                Para publicar o app e salvar dados na nuvem, você precisa autorizar seu email no console do Firebase.
+                                <br/>Copie o código abaixo e cole na aba <strong>Firestore Database &gt; Rules</strong>.
+                            </p>
+                            
+                            <div className="relative group">
+                                <pre className="bg-black border border-zinc-800 rounded-lg p-4 text-xs font-mono text-zinc-400 overflow-x-auto selection:bg-amber-900/50 selection:text-white">
+                                    {rulesCode}
+                                </pre>
+                                <button 
+                                    onClick={() => navigator.clipboard.writeText(rulesCode)}
+                                    className="absolute top-2 right-2 bg-zinc-800 hover:bg-zinc-700 text-white p-2 rounded-md transition opacity-0 group-hover:opacity-100 shadow-lg"
+                                    title="Copiar Código"
+                                >
+                                    <Copy size={14} />
+                                </button>
+                            </div>
+                            
+                            <div className="mt-4 flex gap-4">
+                                <a 
+                                    href="https://console.firebase.google.com/" 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="text-xs font-bold text-amber-500 hover:text-amber-400 flex items-center gap-1"
+                                >
+                                    Ir para o Console Firebase <ExternalLink size={10} />
+                                </a>
+                            </div>
+                        </div>
+                     </div>
+                 )}
+
                </div>
              </div>
 
-             {/* Instructions Card */}
+             {/* Instructions Card (Only show if not showing error to reduce clutter) */}
+             {!showRulesHelper && (
              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="bg-zinc-900/30 p-6 rounded-xl border border-zinc-800">
                     <h4 className="font-bold text-white mb-4 flex items-center gap-2">
@@ -234,6 +307,7 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                     </ul>
                 </div>
              </div>
+             )}
 
           </div>
         )}

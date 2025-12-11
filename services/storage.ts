@@ -12,16 +12,14 @@ const FIRESTORE_CONFIG_DOC = 'main';
 export const saveSettingsRemote = async (settings: AppSettings): Promise<void> => {
     if (!db) {
         // Fallback local se Firebase não estiver ativo
+        console.warn("Firestore não disponível, salvando localmente.");
         localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
         return;
     }
 
-    try {
-        await db.collection(FIRESTORE_CONFIG_COLLECTION).doc(FIRESTORE_CONFIG_DOC).set(settings, { merge: true });
-    } catch (error) {
-        console.error("Erro ao salvar configurações no Firestore:", error);
-        throw new Error("Não foi possível salvar na nuvem. Verifique sua conexão ou permissões.");
-    }
+    // Removemos o try/catch genérico para permitir que o erro de permissão (permission-denied)
+    // chegue até o componente AdminPanel, onde mostraremos as instruções de correção.
+    await db.collection(FIRESTORE_CONFIG_COLLECTION).doc(FIRESTORE_CONFIG_DOC).set(settings, { merge: true });
 };
 
 // Escuta as configurações da Nuvem em Tempo Real
@@ -47,7 +45,7 @@ export const listenToGlobalSettings = (callback: (settings: AppSettings) => void
                 if (local) callback(JSON.parse(local));
             }
         }, (error: any) => {
-            console.error("Erro ao ouvir configurações:", error);
+            console.error("Erro ao ouvir configurações (pode ser permissão):", error);
         });
 
     return unsubscribe;
@@ -328,7 +326,7 @@ export const incrementSearchCountRemote = async (id: string): Promise<void> => {
                lastAccessed: new Date().toISOString()
            }, { merge: true });
        } catch (e) {
-           console.warn("Analytics error", e);
+           console.warn("Analytics error (silent):", e);
        }
    }
 };
