@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import LoginScreen from './components/LoginScreen';
 import MainApp from './components/MainApp';
-import { getCurrentUser, logoutUser } from './services/storage';
+import { logoutUser } from './services/storage'; // Importamos logoutUser para limpar resquícios
 import { logoutFirebase } from './services/firebase';
 import type { User } from './types';
 
@@ -10,11 +10,13 @@ export default function App() {
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    // Verifica sessão local
-    const storedUser = getCurrentUser();
-    if (storedUser) {
-      setUser(storedUser);
-    }
+    // ALTERAÇÃO: Não verificamos mais o 'getCurrentUser()' no localStorage.
+    // Isso garante que ao abrir o app, o usuário SEMPRE caia na tela de Login primeiro.
+    
+    // Opcional: Se quiser garantir que desconectou mesmo, pode chamar isso:
+    // logoutUser(); 
+    
+    // Apenas finaliza o loading e deixa o user como null.
     setLoading(false);
   }, []);
 
@@ -23,13 +25,12 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    await logoutFirebase(); // Limpa sessão no Firebase
-    logoutUser(); // Limpa sessão local
+    await logoutFirebase();
+    logoutUser();
     setUser(null);
   };
 
   if (loading) {
-    // Loader minimalista e rápido enquanto verifica a sessão (fração de segundo)
     return (
         <div className="min-h-screen bg-black flex items-center justify-center">
             <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-zinc-500"></div>
@@ -37,8 +38,7 @@ export default function App() {
     );
   }
 
-  // Lógica de Proteção: Se não houver usuário, mostra Login obrigatório IMEDIATAMENTE.
-  // A Splash Screen foi removida para agilizar o acesso ao login.
+  // Se não houver usuário (o que agora é o padrão ao abrir), mostra Login.
   if (!user) {
       return (
         <LoginScreen 
@@ -47,7 +47,7 @@ export default function App() {
       );
   }
 
-  // Renderiza o App Principal apenas se houver usuário
+  // Apenas renderiza o app principal se o usuário passar pelo LoginScreen
   return (
     <MainApp 
         user={user} 
