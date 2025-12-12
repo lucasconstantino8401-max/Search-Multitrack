@@ -17,7 +17,8 @@ import {
   LogIn,
   Activity,
   Copy,
-  Check
+  Check,
+  AlertCircle
 } from 'lucide-react';
 import { listenToTracks, incrementSearchCountRemote } from '../services/storage';
 import type { MainAppProps, Track } from '../types';
@@ -38,18 +39,22 @@ const normalizeText = (text: string) => {
     .replace(/[\u0300-\u036f]/g, "");
 };
 
-// Função auxiliar para abrir links de forma segura e limpa
+// Função auxiliar para abrir links de forma segura
 const openLinkSafely = (url: string) => {
-    // Cria um elemento <a> temporário para simular um clique genuíno
-    // Isso ajuda com bloqueadores de popup e remove o referrer (noreferrer)
-    // que pode causar erros em alguns servidores de download (como erro 31362)
-    const link = document.createElement('a');
-    link.href = url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer'; 
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // Tenta abrir usando window.open direto, que lida melhor com algumas restrições mobile
+    const win = window.open(url, '_blank', 'noopener,noreferrer');
+    if (win) {
+        win.focus();
+    } else {
+        // Fallback para o método de anchor click se o popup for bloqueado
+        const link = document.createElement('a');
+        link.href = url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
 };
 
 // Componente de Logo SVG Reutilizável
@@ -149,6 +154,11 @@ const TrackDetailView: React.FC<TrackDetailViewProps> = ({ track, onClose, onDow
                       <span>BAIXAR AGORA</span>
                   </button>
                   
+                  {/* Error 31362 Helper */}
+                  <div className="flex items-center gap-2 justify-center mb-1">
+                      <span className="text-[10px] text-zinc-500">Erro 31362? Copie o link abaixo e tente no navegador.</span>
+                  </div>
+
                   <div className="flex gap-3">
                       <button 
                           onClick={handleCopyLink}
@@ -157,7 +167,7 @@ const TrackDetailView: React.FC<TrackDetailViewProps> = ({ track, onClose, onDow
                           {copied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
                           {copied ? "COPIADO!" : "Copiar Link"}
                       </button>
-                      <button className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all text-sm border border-zinc-800">
+                      <button className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all text-sm border border-zinc-800 opacity-50 cursor-not-allowed">
                           <Share2 size={16} /> Share
                       </button>
                   </div>

@@ -12,7 +12,8 @@ import {
   ExternalLink,
   Code2,
   HelpCircle,
-  FileCode
+  FileCode,
+  AlertTriangle
 } from 'lucide-react';
 import { 
     listenToTracks,
@@ -223,8 +224,8 @@ const AdminPanel: React.FC<AdminPanelProps> = ({ user, onClose, onUpdate }) => {
                         <li>
                             Use o link CSV gerado e cole no arquivo <code>services/storage.ts</code>.
                         </li>
-                        <li>
-                            A coluna <strong>Capa</strong> deve ser um link direto de imagem (terminando em .jpg ou .png).
+                        <li className="text-orange-400 font-bold">
+                             Evite Erro 31362: Use links públicos permanentes (Drive, Dropbox, etc). Links temporários com tokens (ex: TeraBox direto) expiram rápido e causam erros.
                         </li>
                     </ul>
                 </div>
