@@ -1,22 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import LoginScreen from './components/LoginScreen';
 import MainApp from './components/MainApp';
-import { logoutUser } from './services/storage'; // Importamos logoutUser para limpar resquícios
+import { getCurrentUser, logoutUser } from './services/storage';
 import { logoutFirebase } from './services/firebase';
 import type { User } from './types';
 
 export default function App() {
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<User | null>(null); // Usuário ativo da sessão atual
+  const [cachedUser, setCachedUser] = useState<User | null>(null); // Usuário salvo no histórico
 
   useEffect(() => {
-    // ALTERAÇÃO: Não verificamos mais o 'getCurrentUser()' no localStorage.
-    // Isso garante que ao abrir o app, o usuário SEMPRE caia na tela de Login primeiro.
-    
-    // Opcional: Se quiser garantir que desconectou mesmo, pode chamar isso:
-    // logoutUser(); 
-    
-    // Apenas finaliza o loading e deixa o user como null.
+    // Verifica se existe um usuário salvo no LocalStorage
+    const stored = getCurrentUser();
+    if (stored) {
+        // NÃO loga automaticamente (setUser), apenas salva no estado de cache
+        // para mostrar na tela de login.
+        setCachedUser(stored);
+    }
     setLoading(false);
   }, []);
 
@@ -26,8 +27,16 @@ export default function App() {
 
   const handleLogout = async () => {
     await logoutFirebase();
+    // Ao sair de dentro do app, limpamos tudo para garantir segurança
     logoutUser();
+    setCachedUser(null);
     setUser(null);
+  };
+
+  const handleClearCache = () => {
+      // Limpa o cache da tela de login (Trocar Conta)
+      logoutUser();
+      setCachedUser(null);
   };
 
   if (loading) {
@@ -38,16 +47,18 @@ export default function App() {
     );
   }
 
-  // Se não houver usuário (o que agora é o padrão ao abrir), mostra Login.
+  // Se não houver usuário ativo, mostra a tela de Login.
+  // Passamos o cachedUser para que a tela de login possa mostrar o botão "Entrar como..."
   if (!user) {
       return (
         <LoginScreen 
             onLogin={handleLogin} 
+            cachedUser={cachedUser}
+            onClearCache={handleClearCache}
         />
       );
   }
 
-  // Apenas renderiza o app principal se o usuário passar pelo LoginScreen
   return (
     <MainApp 
         user={user} 

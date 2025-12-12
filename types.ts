@@ -41,6 +41,8 @@ export interface SplashScreenProps {
 export interface LoginScreenProps {
   onLogin: (user: User) => void;
   onCancel?: () => void; // Added to allow going back to guest mode
+  cachedUser?: User | null; // Usuário salvo no cache
+  onClearCache?: () => void; // Função para limpar o cache e trocar de conta
 }
 
 export interface AdminPanelProps {
